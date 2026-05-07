@@ -13,8 +13,22 @@ use StripeLri\Services\NullCreditLedger;
 
 class StripeLriServiceProvider extends ServiceProvider
 {
+    /**
+     * When {@see \App\Providers\StripeLriServiceProvider} exists (after install), this package
+     * does not register config, routes, migrations, or bindings — the app is standalone and
+     * you may remove {@code stripe-lri/laravel} from Composer.
+     */
+    private function hostBillingIsStandalone(): bool
+    {
+        return is_file(app_path('Providers/StripeLriServiceProvider.php'));
+    }
+
     public function register(): void
     {
+        if ($this->hostBillingIsStandalone()) {
+            return;
+        }
+
         $this->mergeConfigFrom(__DIR__.'/../config/stripe-lri.php', 'stripe-lri');
 
         $this->app->singletonIf(CreditLedger::class, fn (): CreditLedger => new NullCreditLedger);
@@ -36,13 +50,17 @@ class StripeLriServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([InstallStripeLriCommand::class]);
+        }
 
-            if (config('stripe-lri.credit_based')) {
-                $this->commands([
-                    AddMonthlyCreditsForYearlyCommand::class,
-                    ProcessCreditsHistoryCommand::class,
-                ]);
-            }
+        if ($this->hostBillingIsStandalone()) {
+            return;
+        }
+
+        if (config('stripe-lri.credit_based')) {
+            $this->commands([
+                AddMonthlyCreditsForYearlyCommand::class,
+                ProcessCreditsHistoryCommand::class,
+            ]);
         }
 
         $this->registerScheduledTasks();

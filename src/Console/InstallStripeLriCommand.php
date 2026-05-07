@@ -50,7 +50,7 @@ class InstallStripeLriCommand extends Command
 
         if (! $skipPublish) {
             $this->newLine();
-            $this->components->info('Publishing Stripe-LRI code into your application (app/StripeLri, database/migrations, routes/stripe-lri.php)...');
+            $this->components->info('Publishing Stripe-LRI into your application (app/Http, app/Models, migrations, routes/stripe-lri.php, app/Providers/StripeLriServiceProvider.php)...');
             $publisher = new ApplicationCodePublisher;
             foreach ($publisher->publishAll((bool) $this->option('force'), $creditBased, $this->output) as $line) {
                 $this->line(' • '.$line);
@@ -89,9 +89,11 @@ class InstallStripeLriCommand extends Command
         $this->line(' • STRIPE_LRI_REGISTER_ROUTES=true (set false in .env if your app already defines the same URLs)');
         $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook (no web.php edits)');
         if (! $skipPublish) {
-            $this->line(' • Controllers & domain code: app/StripeLri — edit there; re-run install with --force to refresh from the package.');
+            $this->line(' • Billing code lives under app/Http/Controllers/Billing, app/Models/Billing, app/Support/Billing, app/Contracts, app/Services/Billing, app/Console/Commands.');
+            $this->line(' • App provider: app/Providers/StripeLriServiceProvider.php (registered in bootstrap/providers.php).');
+            $this->line(' • After you verify the app, you may run: composer remove stripe-lri/laravel — the package becomes optional; keep it only if you want stripe-lri:install updates.');
             if (! $creditBased) {
-                $this->line(' • Later, to add credit migrations into this app: php artisan stripe-lri:install --credit-based --force');
+                $this->line(' • Later, to add credit migrations: php artisan stripe-lri:install --credit-based --force');
             }
         }
         $this->newLine();

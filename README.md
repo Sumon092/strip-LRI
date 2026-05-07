@@ -69,11 +69,18 @@ php artisan stripe-lri:install --no-interaction --credit-based
 
 **Default install (no `--skip-app-publish`):**
 
-- **`app/StripeLri/`** — controllers, models, form requests, and support classes (namespace `App\StripeLri\…`), transformed from the package so you edit your app, not `vendor`.
-- **`database/migrations/`** — copies the same migration PHP files from the package; with `STRIPE_LRI_PUBLISHED_TO_APP=true` the provider **stops** `loadMigrationsFrom` on the package so only these app migrations run.
-- **`routes/stripe-lri.php`** — three-line file that calls `StripeLri\Routing\StripeLriRouteRegistrar::register('App\StripeLri\Http\Controllers')` (route *definitions* stay in the small package registrar; **handlers** are your app classes).
+- **`app/Http/Controllers/Billing/`** — admin + workspace + Stripe webhook controllers (and `app/Http/Requests/Billing/` for form requests).
+- **`app/Models/Billing/`** — Eloquent models (`Package`, subscription product rows, etc.).
+- **`app/Support/Billing/`** — presenters and `DemoCatalog`.
+- **`app/Contracts/CreditLedger.php`** and **`app/Services/Billing/NullCreditLedger.php`** — credit hook + default no-op.
+- **`app/Console/Commands/`** — `StripeLriCreditsProcessHistory`, `StripeLriCreditsAddMonthlyForYearly` when credit-based.
+- **`app/Providers/StripeLriServiceProvider.php`** — loads `routes/stripe-lri.php`, binds `CreditLedger`, registers credit Artisan + schedule. The installer adds this class to **`bootstrap/providers.php`** if missing.
+- **`routes/stripe-lri.php`** — self-contained route definitions (no vendor route classes). You may edit URLs or middleware here.
+- **`database/migrations/`** — copies migration PHP from the package; with `STRIPE_LRI_PUBLISHED_TO_APP=true` the **package** stops `loadMigrationsFrom` so only app migrations run.
 
-Use **`--skip-app-publish`** only if you want the legacy vendor-only mode (controllers and migrations resolved from the package).
+When **`app/Providers/StripeLriServiceProvider.php`** is present, the **package** `StripeLri\StripeLriServiceProvider` becomes a **no-op** (only `vendor:publish` for config + `stripe-lri:install` remain useful). You can then run **`composer remove stripe-lri/laravel`** and keep only the copied files; billing continues to work from your `app/` tree.
+
+Use **`--skip-app-publish`** only for legacy vendor-only mode (controllers and migrations from the package).
 
 **Tables** (same as before):
 
@@ -83,7 +90,7 @@ Use **`--skip-app-publish`** only if you want the legacy vendor-only mode (contr
 
 Set `STRIPE_LRI_CREDIT_BASED` **before** the first `migrate` (the installer writes `.env` then runs `migrate` in a subprocess so the flag is picked up). If you later turn credits on and used a non–credit-based install, run **`stripe-lri:install --credit-based --force`** so credit migrations are copied, then migrate again.
 
-Re-copy the latest package sources into `app/StripeLri` with **`stripe-lri:install --force`** (overwrites published PHP, migrations, and `routes/stripe-lri.php` where applicable).
+Re-copy the latest package sources into the app with **`stripe-lri:install --force`** (overwrites published controllers, models, support, provider stub, `routes/stripe-lri.php`, and migrations where applicable).
 
 **Note:** `composer require` cannot safely run Artisan for every project automatically. The supported flow is **`composer require`** then **`php artisan stripe-lri:install`**. To skip migrations (e.g. CI), use `--no-migrate`.
 
@@ -129,7 +136,7 @@ All keys below are read from **`.env`** via `config/stripe-lri.php` (after you p
 | `STRIPE_LRI_SCHEDULE_PROCESS_HISTORY` | `true` | Only if credit-based + schedule enabled: hourly `stripe-lri:credits:process-history`. |
 | `STRIPE_LRI_SCHEDULE_MONTHLY_CREDITS` | `true` | Only if credit-based + schedule enabled: daily `stripe-lri:credits:add-monthly-for-yearly`. |
 
-Bind `StripeLri\Contracts\CreditLedger` in your app before relying on the schedule commands; the default implementation is a no-op.
+Bind `App\Contracts\CreditLedger` in your app before relying on the schedule commands; the default implementation is `App\Services\Billing\NullCreditLedger` (no-op) until you replace it.
 
 ## Webhook
 
@@ -149,11 +156,11 @@ The **Indexchecker** app (`indexcheckerv2`) implements billing roughly as follow
 
 This package exposes **parallel Artisan names** (opt-in scheduler):
 
-- `stripe-lri:credits:add-monthly-for-yearly` — calls `StripeLri\Contracts\CreditLedger::addMonthlyCreditsForYearlyAndLifetime()`
-- `stripe-lri:credits:process-history` — calls `CreditLedger::processCreditsHistory()`
+- `stripe-lri:credits:add-monthly-for-yearly` — calls `App\Contracts\CreditLedger::addMonthlyCreditsForYearlyAndLifetime()`
+- `stripe-lri:credits:process-history` — calls `App\Contracts\CreditLedger::processCreditsHistory()`
 
 Set `STRIPE_LRI_SCHEDULE_ENABLED=true` and bind `CreditLedger` in your `AppServiceProvider` to a class that ports the Indexchecker logic. Default binding is `NullCreditLedger` (no-op).
 
 ## Next steps
 
-Subscription products are persisted via `StripeLri\Http\Controllers\Admin\AdminPackagesController` and child tables. Other admin billing screens (coupons, transactions, invoices list) still use **demo** payloads from `StripeLri\Support\DemoCatalog` until you wire them to your data.
+Subscription products are persisted via `App\Http\Controllers\Billing\Admin\AdminPackagesController` and child tables. Other admin billing screens (coupons, transactions, invoices list) still use **demo** payloads from `App\Support\Billing\DemoCatalog` until you wire them to your data.
