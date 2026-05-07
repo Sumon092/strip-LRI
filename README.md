@@ -55,14 +55,31 @@ Use any path to the folder that contains this package’s `composer.json`.
 
 ### After `composer require`
 
-Laravel **auto-discovers** `StripeLriServiceProvider` (see `composer.json` → `extra.laravel.providers`). Then run:
+Laravel **auto-discovers** `StripeLriServiceProvider` (see `composer.json` → `extra.laravel.providers`). Run **one** installer command — it publishes config, writes `.env`, registers **`/stripe/webhook` (GET + POST) from the package** (no `routes/web.php` edits), and runs **`php artisan migrate`** unless you pass `--no-migrate`:
 
 ```bash
 php artisan stripe-lri:install
-php artisan migrate
 ```
 
-Migrations (`stripe_lri_webhook_events`, billing core tables) ship **inside the package** and are registered automatically via `loadMigrationsFrom` — you do **not** need `vendor:publish` for them unless you copy them out to customize (then remove duplicates from the package path or disable loading — advanced).
+Non-interactive example:
+
+```bash
+php artisan stripe-lri:install --no-interaction --credit-based
+```
+
+Migrations (`stripe_lri_webhook_events`, billing core tables) ship **inside the package** and load via `loadMigrationsFrom`. You do **not** copy migration files unless you intend to fork the schema.
+
+**Note:** `composer require` cannot safely run Artisan for every project automatically. The supported flow is **`composer require`** then **`php artisan stripe-lri:install`**. To skip migrations (e.g. CI), use `--no-migrate`.
+
+Optional — run install after every `composer install` on **this** app only (add to the **host** `composer.json` `scripts`):
+
+```json
+"post-install-cmd": [
+    "@php artisan stripe-lri:install --no-interaction --credit-based"
+]
+```
+
+Adjust flags to match your product; use `--no-migrate` in environments where you manage migrations separately.
 
 ## Configure (interactive)
 
@@ -81,7 +98,8 @@ All keys below are read from **`.env`** via `config/stripe-lri.php` (after you p
 | Variable | Example | Purpose |
 |----------|---------|---------|
 | `STRIPE_LRI_CREDIT_BASED` | `true` / `false` | From the install prompt; toggles credit-based UI / behavior flags in the app. |
-| `STRIPE_LRI_REGISTER_ROUTES` | `true` | When `true`, the package registers workspace + admin billing routes and `POST /stripe/webhook`. Set `false` if your app defines the same URLs in `routes/web.php`. |
+| `STRIPE_LRI_REGISTER_ROUTES` | `true` | When `true`, the package registers workspace + admin **billing UI** routes. Set `false` if your app already defines those URLs. |
+| `STRIPE_LRI_REGISTER_WEBHOOK` | `true` | When `true`, registers **`GET` + `POST` `/stripe/webhook`** (no edits to `routes/web.php`). Set `false` only if you define these routes yourself. |
 
 ### Optional — add when you need them
 

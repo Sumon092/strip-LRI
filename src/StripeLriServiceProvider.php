@@ -39,11 +39,27 @@ class StripeLriServiceProvider extends ServiceProvider
 
         $this->registerScheduledTasks();
 
-        if (! config('stripe-lri.register_routes', false)) {
-            return;
+        if (config('stripe-lri.register_webhook', true)) {
+            $this->registerWebhookRoutes();
         }
 
-        $this->registerRoutes();
+        if (config('stripe-lri.register_routes', false)) {
+            $this->registerBillingRoutes();
+        }
+    }
+
+    /**
+     * GET (browser help) + POST (Stripe) — no host routes/web.php changes required.
+     */
+    protected function registerWebhookRoutes(): void
+    {
+        Route::middleware('web')->group(function (): void {
+            Route::get('/stripe/webhook', Http\Controllers\StripeWebhookInfoController::class)
+                ->name('stripe.webhook.info');
+            Route::post('/stripe/webhook', [Http\Controllers\StripeWebhookController::class, 'handle'])
+                ->name('stripe.webhook')
+                ->withoutMiddleware([VerifyCsrfToken::class]);
+        });
     }
 
     protected function registerScheduledTasks(): void
@@ -69,7 +85,7 @@ class StripeLriServiceProvider extends ServiceProvider
         });
     }
 
-    protected function registerRoutes(): void
+    protected function registerBillingRoutes(): void
     {
         $workspaceMw = config('stripe-lri.middleware.workspace', ['web', 'auth', 'verified']);
         $adminMw = config('stripe-lri.middleware.admin', ['web', 'auth', 'verified', 'admin']);
@@ -124,9 +140,5 @@ class StripeLriServiceProvider extends ServiceProvider
             Route::get('/premium-customers/revenue-month', [Http\Controllers\Admin\AdminBillingController::class, 'premiumRevenueMonth'])
                 ->name('premium-customers.revenue-month');
         });
-
-        Route::post('/stripe/webhook', [Http\Controllers\StripeWebhookController::class, 'handle'])
-            ->name('stripe.webhook')
-            ->withoutMiddleware([VerifyCsrfToken::class]);
     }
 }

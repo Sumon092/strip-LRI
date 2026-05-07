@@ -14,6 +14,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Register Stripe webhook routes (GET info + POST handler)
+    |--------------------------------------------------------------------------
+    |
+    | When true (default), the package registers /stripe/webhook without editing
+    | your routes/web.php. Set false only if you define these routes yourself.
+    |
+    */
+    'register_webhook' => (bool) env('STRIPE_LRI_REGISTER_WEBHOOK', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Credit-based product model
     |--------------------------------------------------------------------------
     |
