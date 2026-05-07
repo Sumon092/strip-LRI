@@ -59,8 +59,10 @@ Laravel **auto-discovers** `StripeLriServiceProvider` (see `composer.json` → `
 
 ```bash
 php artisan stripe-lri:install
-php artisan vendor:publish --tag=stripe-lri-migrations
+php artisan migrate
 ```
+
+Migrations (`stripe_lri_webhook_events`, billing core tables) ship **inside the package** and are registered automatically via `loadMigrationsFrom` — you do **not** need `vendor:publish` for them unless you copy them out to customize (then remove duplicates from the package path or disable loading — advanced).
 
 ## Configure (interactive)
 
@@ -70,18 +72,30 @@ After Composer finishes, run the installer. It publishes `config/stripe-lri.php`
 php artisan stripe-lri:install
 ```
 
-It appends (or updates) in `.env`:
+## Environment variables
 
-- `STRIPE_LRI_CREDIT_BASED=true|false`
-- `STRIPE_LRI_REGISTER_ROUTES=true`
+All keys below are read from **`.env`** via `config/stripe-lri.php` (after you publish config). Middleware arrays in that file are **not** driven by `.env`.
 
-Set `STRIPE_LRI_REGISTER_ROUTES=false` if you register the same URLs yourself.
+### Set by `php artisan stripe-lri:install`
 
-Optional:
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `STRIPE_LRI_CREDIT_BASED` | `true` / `false` | From the install prompt; toggles credit-based UI / behavior flags in the app. |
+| `STRIPE_LRI_REGISTER_ROUTES` | `true` | When `true`, the package registers workspace + admin billing routes and `POST /stripe/webhook`. Set `false` if your app defines the same URLs in `routes/web.php`. |
 
-- `STRIPE_LRI_USER_MODEL=App\\Models\\User`
-- `STRIPE_LRI_USERS_TABLE=users`
-- `STRIPE_SECRET` / `STRIPE_WEBHOOK_SECRET` (or `STRIPE_LRI_*` aliases from config)
+### Optional — add when you need them
+
+| Variable | Default if unset | Purpose |
+|----------|------------------|---------|
+| `STRIPE_LRI_USER_MODEL` | `App\Models\User` | Eloquent user class for package user admin. |
+| `STRIPE_LRI_USERS_TABLE` | `users` | `users` table name for validation / queries. |
+| `STRIPE_SECRET` **or** `STRIPE_LRI_SECRET` | *(empty)* | Stripe secret API key. |
+| `STRIPE_WEBHOOK_SECRET` **or** `STRIPE_LRI_WEBHOOK_SECRET` | *(empty)* | Stripe webhook signing secret. |
+| `STRIPE_LRI_SCHEDULE_ENABLED` | `false` | When `true`, registers packaged scheduler tasks (see below). |
+| `STRIPE_LRI_SCHEDULE_PROCESS_HISTORY` | `true` | Only used if schedule enabled: hourly `stripe-lri:credits:process-history`. |
+| `STRIPE_LRI_SCHEDULE_MONTHLY_CREDITS` | `true` | Only used if schedule enabled: daily `stripe-lri:credits:add-monthly-for-yearly`. |
+
+Bind `StripeLri\Contracts\CreditLedger` in your app before relying on the schedule commands; the default implementation is a no-op.
 
 ## Webhook
 
@@ -105,12 +119,6 @@ This package exposes **parallel Artisan names** (opt-in scheduler):
 - `stripe-lri:credits:process-history` — calls `CreditLedger::processCreditsHistory()`
 
 Set `STRIPE_LRI_SCHEDULE_ENABLED=true` and bind `CreditLedger` in your `AppServiceProvider` to a class that ports the Indexchecker logic. Default binding is `NullCreditLedger` (no-op).
-
-Publish optional idempotency migration:
-
-```bash
-php artisan vendor:publish --tag=stripe-lri-migrations
-```
 
 ## Next steps
 

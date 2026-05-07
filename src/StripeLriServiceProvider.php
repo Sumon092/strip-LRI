@@ -19,6 +19,8 @@ class StripeLriServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/stripe-lri.php', 'stripe-lri');
 
         $this->app->singletonIf(CreditLedger::class, fn (): CreditLedger => new NullCreditLedger);
+
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
     }
 
     public function boot(): void
@@ -26,10 +28,6 @@ class StripeLriServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/stripe-lri.php' => config_path('stripe-lri.php'),
         ], 'stripe-lri-config');
-
-        $this->publishes([
-            __DIR__.'/../database/migrations' => database_path('migrations'),
-        ], 'stripe-lri-migrations');
 
         if ($this->app->runningInConsole()) {
             $this->commands([

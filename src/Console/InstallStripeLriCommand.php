@@ -46,6 +46,7 @@ class InstallStripeLriCommand extends Command
         $this->line(' • STRIPE_LRI_REGISTER_ROUTES=true (disable in .env if you register routes manually)');
         $this->newLine();
         $this->line('Run `php artisan config:clear` if config is cached.');
+        $this->line('Run `php artisan migrate` to create Stripe-LRI database tables (loaded from the package).');
 
         return self::SUCCESS;
     }
