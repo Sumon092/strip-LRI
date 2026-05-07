@@ -1,0 +1,40 @@
+{
+    "name": "stripe-lri/laravel",
+    "description": "Stripe-LRI: Stripe-oriented billing, subscriptions, and admin commerce routes for Laravel + Inertia (standalone stripe/stripe-php).",
+    "type": "library",
+    "license": "MIT",
+    "homepage": "https://github.com/your-vendor/stripe-lri",
+    "support": {
+        "issues": "https://github.com/your-vendor/stripe-lri/issues",
+        "source": "https://github.com/your-vendor/stripe-lri"
+    },
+    "keywords": ["laravel", "stripe", "billing", "inertia", "subscriptions"],
+    "require": {
+        "php": "^8.2",
+        "illuminate/console": "^12.0|^13.0",
+        "illuminate/contracts": "^12.0|^13.0",
+        "illuminate/database": "^12.0|^13.0",
+        "illuminate/http": "^12.0|^13.0",
+        "illuminate/routing": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
+        "inertiajs/inertia-laravel": "^2.0",
+        "stripe/stripe-php": "^17.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "StripeLri\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "StripeLri\\StripeLriServiceProvider"
+            ]
+        },
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
