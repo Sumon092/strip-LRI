@@ -27,7 +27,7 @@ final class StripeLriRouteRegistrar
     private static function registerWebhookRoutes(string $c): void
     {
         Route::middleware('web')->group(function () use ($c): void {
-            Route::get('/stripe/webhook', "{$c}\\StripeWebhookInfoController")
+            Route::get('/stripe/webhook', ["{$c}\\StripeWebhookInfoController", '__invoke'])
                 ->name('stripe.webhook.info');
             Route::post('/stripe/webhook', ["{$c}\\StripeWebhookController", 'handle'])
                 ->name('stripe.webhook')

@@ -27,9 +27,12 @@ final class ApplicationCodePublisher
         $lines = [];
         $packageRoot = dirname(__DIR__, 2);
         $destRoot = base_path('app/StripeLri');
+        $marker = $destRoot.'/Http/Controllers/StripeWebhookInfoController.php';
 
-        if ($this->files->isDirectory($destRoot) && ! $force) {
-            $lines[] = 'Skipped copying app/StripeLri (already exists). Use --force to overwrite.';
+        // Only skip when a full publish is already present; an empty or partial
+        // app/StripeLri directory must be replaced (otherwise routes point at missing classes).
+        if ($this->files->exists($marker) && ! $force) {
+            $lines[] = 'Skipped copying app/StripeLri (already published). Use --force to overwrite.';
         } else {
             if ($this->files->isDirectory($destRoot)) {
                 $this->files->deleteDirectory($destRoot);
