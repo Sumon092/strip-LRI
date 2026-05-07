@@ -1,9 +1,10 @@
 <?php
 
-namespace StripeLri\Http\Controllers;
+namespace StripeLri\Http\Controllers\Webhooks;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Routing\Controller;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\Webhook;
 
@@ -25,7 +26,6 @@ class StripeWebhookController extends Controller
             return response('Invalid payload.', 400);
         }
 
-        // Dispatch domain events from your app by listening to `stripe-lri` events in a future release.
         logger()->info('stripe-lri.webhook', ['type' => $event->type, 'id' => $event->id]);
 
         return response('OK', 200);

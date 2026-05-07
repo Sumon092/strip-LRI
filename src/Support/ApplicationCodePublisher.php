@@ -7,8 +7,8 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Finder\Finder;
 
 /**
- * Copies Stripe-LRI sources into conventional Laravel app paths (Billing segment)
- * so the host app runs without resolving controllers/models from vendor.
+ * Copies Stripe-LRI sources into conventional Laravel app paths so the host app
+ * runs without resolving controllers/models from vendor.
  *
  * @see \App\Providers\StripeLriServiceProvider Generated on install; when present the
  *      package {@see \StripeLri\StripeLriServiceProvider} becomes a no-op so you may
@@ -16,7 +16,7 @@ use Symfony\Component\Finder\Finder;
  */
 final class ApplicationCodePublisher
 {
-    private const MARKER_RELATIVE = 'Http/Controllers/Billing/StripeWebhookInfoController.php';
+    private const MARKER_RELATIVE = 'Http/Controllers/Webhooks/StripeWebhookInfoController.php';
 
     public function __construct(
         private readonly Filesystem $files = new Filesystem,
@@ -39,13 +39,15 @@ final class ApplicationCodePublisher
 
         if ($fullCodePublish) {
             $this->removeLegacyAppStripeLriDirectory();
+            $this->removeLegacyPublishedBillingControllerTree();
+            $this->removeObsoletePublishedSupportFiles();
             $this->publishMappedPhpTree($packageRoot.'/src', $appBase, $output);
             $this->publishContractAndServices($packageRoot);
             $this->publishConsoleCommands();
             $this->files->put(base_path('routes/stripe-lri.php'), $this->standaloneRoutesFileContents());
             $this->files->put(app_path('Providers/StripeLriServiceProvider.php'), $this->hostStripeLriServiceProviderContents());
             $this->ensureHostProviderRegistered($output);
-            $lines[] = 'Published billing code under app/Http, app/Models, app/Support, app/Contracts, app/Services, app/Console.';
+            $lines[] = 'Published Stripe-LRI code under app/Http (Admin, Workspace, Webhooks, Concerns), app/Models/Billing, app/Support/Billing, app/Contracts, app/Services, app/Console.';
             $lines[] = 'Published app/Providers/StripeLriServiceProvider.php and routes/stripe-lri.php (no vendor route classes).';
         } else {
             $lines[] = 'Skipped copying billing PHP (marker present). Use --force to overwrite all published app files.';
@@ -69,6 +71,23 @@ final class ApplicationCodePublisher
         $legacy = base_path('app/StripeLri');
         if ($this->files->isDirectory($legacy)) {
             $this->files->deleteDirectory($legacy);
+        }
+    }
+
+    /** Removes pre-refactor tree {@code app/Http/Controllers/Billing/} (Admin, Workspace, webhooks). */
+    private function removeLegacyPublishedBillingControllerTree(): void
+    {
+        $legacy = base_path('app/Http/Controllers/Billing');
+        if ($this->files->isDirectory($legacy)) {
+            $this->files->deleteDirectory($legacy);
+        }
+    }
+
+    private function removeObsoletePublishedSupportFiles(): void
+    {
+        $obsolete = base_path('app/Support/Billing/DemoCatalog.php');
+        if ($this->files->exists($obsolete)) {
+            $this->files->delete($obsolete);
         }
     }
 
@@ -106,17 +125,8 @@ final class ApplicationCodePublisher
 
     private function mapSourceRelativeToAppPath(string $relative): ?string
     {
-        if (str_starts_with($relative, 'Http/Controllers/Admin/')) {
-            return 'Http/Controllers/Billing/'.substr($relative, strlen('Http/Controllers/'));
-        }
-        if (str_starts_with($relative, 'Http/Controllers/Workspace/')) {
-            return 'Http/Controllers/Billing/'.substr($relative, strlen('Http/Controllers/'));
-        }
-        if (str_starts_with($relative, 'Http/Controllers/StripeWebhook')) {
-            return 'Http/Controllers/Billing/'.basename($relative);
-        }
-        if ($relative === 'Http/Controllers/Controller.php') {
-            return 'Http/Controllers/Billing/Controller.php';
+        if (str_starts_with($relative, 'Http/Controllers/')) {
+            return $relative;
         }
         if (str_starts_with($relative, 'Http/Requests/')) {
             return 'Http/Requests/Billing/'.substr($relative, strlen('Http/Requests/'));
@@ -161,18 +171,17 @@ final class ApplicationCodePublisher
     private function classAliasMap(): array
     {
         return [
-            'App\\StripeLri\\Http\\Controllers\\Admin\\' => 'App\\Http\\Controllers\\Billing\\Admin\\',
-            'App\\StripeLri\\Http\\Controllers\\Workspace\\' => 'App\\Http\\Controllers\\Billing\\Workspace\\',
-            'App\\StripeLri\\Http\\Controllers\\StripeWebhook' => 'App\\Http\\Controllers\\Billing\\StripeWebhook',
-            'App\\StripeLri\\Http\\Controllers\\Controller' => 'App\\Http\\Controllers\\Billing\\Controller',
+            'App\\StripeLri\\Http\\Controllers\\Admin\\' => 'App\\Http\\Controllers\\Admin\\',
+            'App\\StripeLri\\Http\\Controllers\\Workspace\\' => 'App\\Http\\Controllers\\Workspace\\',
+            'App\\StripeLri\\Http\\Controllers\\Webhooks\\' => 'App\\Http\\Controllers\\Webhooks\\',
+            'App\\StripeLri\\Http\\Controllers\\Concerns\\' => 'App\\Http\\Controllers\\Concerns\\',
             'App\\StripeLri\\Http\\Requests\\' => 'App\\Http\\Requests\\Billing\\',
             'App\\StripeLri\\Models\\' => 'App\\Models\\Billing\\',
             'App\\StripeLri\\Support\\' => 'App\\Support\\Billing\\',
-            'StripeLri\\Http\\Controllers\\Admin\\' => 'App\\Http\\Controllers\\Billing\\Admin\\',
-            'StripeLri\\Http\\Controllers\\Workspace\\' => 'App\\Http\\Controllers\\Billing\\Workspace\\',
-            'StripeLri\\Http\\Controllers\\StripeWebhookInfoController' => 'App\\Http\\Controllers\\Billing\\StripeWebhookInfoController',
-            'StripeLri\\Http\\Controllers\\StripeWebhookController' => 'App\\Http\\Controllers\\Billing\\StripeWebhookController',
-            'StripeLri\\Http\\Controllers\\Controller' => 'App\\Http\\Controllers\\Billing\\Controller',
+            'StripeLri\\Http\\Controllers\\Admin\\' => 'App\\Http\\Controllers\\Admin\\',
+            'StripeLri\\Http\\Controllers\\Workspace\\' => 'App\\Http\\Controllers\\Workspace\\',
+            'StripeLri\\Http\\Controllers\\Webhooks\\' => 'App\\Http\\Controllers\\Webhooks\\',
+            'StripeLri\\Http\\Controllers\\Concerns\\' => 'App\\Http\\Controllers\\Concerns\\',
             'StripeLri\\Http\\Requests\\' => 'App\\Http\\Requests\\Billing\\',
             'StripeLri\\Models\\' => 'App\\Models\\Billing\\',
             'StripeLri\\Support\\' => 'App\\Support\\Billing\\',
@@ -276,13 +285,13 @@ declare(strict_types=1);
 /**
  * Stripe-LRI billing routes (standalone). No vendor Stripe-LRI classes required.
  */
-use App\Http\Controllers\Billing\Admin\AdminBillingController;
-use App\Http\Controllers\Billing\Admin\AdminCouponsController;
-use App\Http\Controllers\Billing\Admin\AdminPackagesController;
-use App\Http\Controllers\Billing\Admin\AdminUsersController;
-use App\Http\Controllers\Billing\StripeWebhookController;
-use App\Http\Controllers\Billing\StripeWebhookInfoController;
-use App\Http\Controllers\Billing\Workspace\WorkspaceBillingController;
+use App\Http\Controllers\Admin\BillingCouponsController;
+use App\Http\Controllers\Admin\BillingLedgerController;
+use App\Http\Controllers\Admin\BillingPackagesController;
+use App\Http\Controllers\Admin\BillingUsersController;
+use App\Http\Controllers\Webhooks\StripeWebhookController;
+use App\Http\Controllers\Webhooks\StripeWebhookInfoController;
+use App\Http\Controllers\Workspace\WorkspaceBillingController;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Support\Facades\Route;
 
@@ -310,44 +319,44 @@ if (config('stripe-lri.register_routes', false)) {
     });
 
     Route::middleware($adminMw)->prefix('admin')->name('admin.')->group(function (): void {
-        Route::get('/users', [AdminUsersController::class, 'index'])->name('users.index');
-        Route::get('/users/{user}', [AdminUsersController::class, 'show'])
+        Route::get('/users', [BillingUsersController::class, 'index'])->name('users.index');
+        Route::get('/users/{user}', [BillingUsersController::class, 'show'])
             ->whereNumber('user')->name('users.show');
-        Route::get('/users/{user}/edit', [AdminUsersController::class, 'edit'])
+        Route::get('/users/{user}/edit', [BillingUsersController::class, 'edit'])
             ->whereNumber('user')->name('users.edit');
-        Route::patch('/users/{user}', [AdminUsersController::class, 'update'])
+        Route::patch('/users/{user}', [BillingUsersController::class, 'update'])
             ->whereNumber('user')->name('users.update');
-        Route::post('/users/{user}/credits', [AdminUsersController::class, 'adjustCredits'])
+        Route::post('/users/{user}/credits', [BillingUsersController::class, 'adjustCredits'])
             ->whereNumber('user')->name('users.credits.adjust');
-        Route::post('/users/{user}/impersonate', [AdminUsersController::class, 'impersonate'])
+        Route::post('/users/{user}/impersonate', [BillingUsersController::class, 'impersonate'])
             ->whereNumber('user')->name('users.impersonate');
-        Route::delete('/users/{user}', [AdminUsersController::class, 'destroy'])
+        Route::delete('/users/{user}', [BillingUsersController::class, 'destroy'])
             ->whereNumber('user')->name('users.destroy');
 
-        Route::get('/packages', [AdminPackagesController::class, 'index'])->name('packages.index');
-        Route::get('/packages/create', [AdminPackagesController::class, 'create'])->name('packages.create');
-        Route::post('/packages', [AdminPackagesController::class, 'store'])->name('packages.store');
-        Route::get('/packages/{package}/edit', [AdminPackagesController::class, 'edit'])
+        Route::get('/packages', [BillingPackagesController::class, 'index'])->name('packages.index');
+        Route::get('/packages/create', [BillingPackagesController::class, 'create'])->name('packages.create');
+        Route::post('/packages', [BillingPackagesController::class, 'store'])->name('packages.store');
+        Route::get('/packages/{package}/edit', [BillingPackagesController::class, 'edit'])
             ->whereNumber('package')->name('packages.edit');
-        Route::put('/packages/{package}', [AdminPackagesController::class, 'update'])
+        Route::put('/packages/{package}', [BillingPackagesController::class, 'update'])
             ->whereNumber('package')->name('packages.update');
-        Route::delete('/packages/{package}', [AdminPackagesController::class, 'destroy'])
+        Route::delete('/packages/{package}', [BillingPackagesController::class, 'destroy'])
             ->whereNumber('package')->name('packages.destroy');
 
-        Route::get('/coupons', [AdminCouponsController::class, 'index'])->name('coupons.index');
-        Route::get('/coupons/create', [AdminCouponsController::class, 'create'])->name('coupons.create');
-        Route::post('/coupons', [AdminCouponsController::class, 'store'])->name('coupons.store');
-        Route::get('/coupons/{coupon}/edit', [AdminCouponsController::class, 'edit'])
+        Route::get('/coupons', [BillingCouponsController::class, 'index'])->name('coupons.index');
+        Route::get('/coupons/create', [BillingCouponsController::class, 'create'])->name('coupons.create');
+        Route::post('/coupons', [BillingCouponsController::class, 'store'])->name('coupons.store');
+        Route::get('/coupons/{coupon}/edit', [BillingCouponsController::class, 'edit'])
             ->whereNumber('coupon')->name('coupons.edit');
-        Route::put('/coupons/{coupon}', [AdminCouponsController::class, 'update'])
+        Route::put('/coupons/{coupon}', [BillingCouponsController::class, 'update'])
             ->whereNumber('coupon')->name('coupons.update');
-        Route::delete('/coupons/{coupon}', [AdminCouponsController::class, 'destroy'])
+        Route::delete('/coupons/{coupon}', [BillingCouponsController::class, 'destroy'])
             ->whereNumber('coupon')->name('coupons.destroy');
 
-        Route::get('/transactions', [AdminBillingController::class, 'transactions'])->name('transactions.index');
-        Route::get('/invoices', [AdminBillingController::class, 'invoices'])->name('invoices.index');
-        Route::get('/premium-customers', [AdminBillingController::class, 'premiumCustomers'])->name('premium-customers.index');
-        Route::get('/premium-customers/revenue-month', [AdminBillingController::class, 'premiumRevenueMonth'])
+        Route::get('/transactions', [BillingLedgerController::class, 'transactions'])->name('transactions.index');
+        Route::get('/invoices', [BillingLedgerController::class, 'invoices'])->name('invoices.index');
+        Route::get('/premium-customers', [BillingLedgerController::class, 'premiumCustomers'])->name('premium-customers.index');
+        Route::get('/premium-customers/revenue-month', [BillingLedgerController::class, 'premiumRevenueMonth'])
             ->name('premium-customers.revenue-month');
     });
 }

@@ -5,15 +5,15 @@ namespace StripeLri\Http\Controllers\Admin;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 use Inertia\Response;
-use StripeLri\Http\Controllers\Controller;
 use StripeLri\Http\Requests\AdminUserCreditsAdjustRequest;
 use StripeLri\Http\Requests\AdminUserUpdateRequest;
 use StripeLri\Support\UserPresenter;
 
-class AdminUsersController extends Controller
+class BillingUsersController extends Controller
 {
     public function index(Request $request): Response
     {

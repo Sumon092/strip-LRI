@@ -1,6 +1,6 @@
 # Stripe-LRI (Laravel)
 
-Standalone **Stripe PHP SDK** integration surface for Laravel apps using **Inertia**. Ships demo-backed routes aligned with billing, subscriptions, packages, coupons, transactions, invoices, and premium-customer admin screens.
+Standalone **Stripe PHP SDK** integration surface for Laravel apps using **Inertia**. Ships routes and controllers aligned with billing, subscriptions, packages, coupons, transactions, invoices, and premium-customer admin screens (empty lists until you wire Stripe and your database).
 
 ## Install in any Laravel project
 
@@ -69,9 +69,13 @@ php artisan stripe-lri:install --no-interaction --credit-based
 
 **Default install (no `--skip-app-publish`):**
 
-- **`app/Http/Controllers/Billing/`** — admin + workspace + Stripe webhook controllers (and `app/Http/Requests/Billing/` for form requests).
+- **`app/Http/Controllers/Admin/`** — Stripe-LRI billing admin (`BillingPackagesController`, `BillingUsersController`, `BillingCouponsController`, `BillingLedgerController`; namespaced so they do not clash with your own `Admin\*` demo controllers).
+- **`app/Http/Controllers/Workspace/`** — workspace billing (`WorkspaceBillingController`).
+- **`app/Http/Controllers/Webhooks/`** — `StripeWebhookController`, `StripeWebhookInfoController`.
+- **`app/Http/Controllers/Concerns/`** — small traits shared by published controllers.
+- **`app/Http/Requests/Billing/`** — form requests for packages and admin users.
 - **`app/Models/Billing/`** — Eloquent models (`Package`, subscription product rows, etc.).
-- **`app/Support/Billing/`** — presenters and `DemoCatalog`.
+- **`app/Support/Billing/`** — presenters (`PackagePresenter`, `UserPresenter`, etc.).
 - **`app/Contracts/CreditLedger.php`** and **`app/Services/Billing/NullCreditLedger.php`** — credit hook + default no-op.
 - **`app/Console/Commands/`** — `StripeLriCreditsProcessHistory`, `StripeLriCreditsAddMonthlyForYearly` when credit-based.
 - **`app/Providers/StripeLriServiceProvider.php`** — loads `routes/stripe-lri.php`, binds `CreditLedger`, registers credit Artisan + schedule. The installer adds this class to **`bootstrap/providers.php`** if missing.
@@ -163,4 +167,4 @@ Set `STRIPE_LRI_SCHEDULE_ENABLED=true` and bind `CreditLedger` in your `AppServi
 
 ## Next steps
 
-Subscription products are persisted via `App\Http\Controllers\Billing\Admin\AdminPackagesController` and child tables. Other admin billing screens (coupons, transactions, invoices list) still use **demo** payloads from `App\Support\Billing\DemoCatalog` until you wire them to your data.
+Subscription products are persisted via `App\Http\Controllers\Admin\BillingPackagesController` and child tables. Coupons, transactions, invoices, premium customers, and workspace billing pages render **empty** paginators and zeroed summaries until you connect Stripe and your own queries or repositories.

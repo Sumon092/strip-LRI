@@ -4,15 +4,15 @@ namespace StripeLri\Http\Controllers\Admin;
 
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controller;
 use Inertia\Inertia;
 use Inertia\Response;
-use StripeLri\Http\Controllers\Controller;
 use StripeLri\Http\Requests\StorePackageRequest;
 use StripeLri\Http\Requests\UpdatePackageRequest;
 use StripeLri\Models\Package;
 use StripeLri\Support\PackagePresenter;
 
-class AdminPackagesController extends Controller
+class BillingPackagesController extends Controller
 {
     public function index(Request $request): Response
     {

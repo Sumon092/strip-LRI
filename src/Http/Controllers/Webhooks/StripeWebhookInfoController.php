@@ -1,8 +1,9 @@
 <?php
 
-namespace StripeLri\Http\Controllers;
+namespace StripeLri\Http\Controllers\Webhooks;
 
 use Illuminate\Http\Response;
+use Illuminate\Routing\Controller;
 
 /**
  * Browsers issue GET; Stripe issues POST. This endpoint explains GET visits.

@@ -3,20 +3,18 @@
 namespace StripeLri\Http\Controllers\Workspace;
 
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controller;
 use Inertia\Inertia;
 use Inertia\Response;
-use StripeLri\Http\Controllers\Controller;
-use StripeLri\Support\DemoCatalog;
+use StripeLri\Http\Controllers\Concerns\EmptyPagination;
 
 class WorkspaceBillingController extends Controller
 {
+    use EmptyPagination;
+
     public function billingHistory(Request $request): Response
     {
-        $payments = DemoCatalog::billingPayments();
-        $invoices = DemoCatalog::billingCustomerInvoices();
-
-        $paymentsPaginated = DemoCatalog::paginate(
-            $payments,
+        $paymentsPaginated = $this->emptyPaginator(
             $request,
             'billing-history.index',
             8,
@@ -24,8 +22,7 @@ class WorkspaceBillingController extends Controller
             'payments_page',
         );
 
-        $invoicesPaginated = DemoCatalog::paginate(
-            $invoices,
+        $invoicesPaginated = $this->emptyPaginator(
             $request,
             'billing-history.index',
             8,
@@ -37,10 +34,10 @@ class WorkspaceBillingController extends Controller
             'creditBased' => (bool) config('stripe-lri.credit_based'),
             'billingHistory' => [
                 'summary' => [
-                    'paymentsCount' => count($payments),
-                    'invoicesCount' => count($invoices),
-                    'paidTotal' => '$4,182.00',
-                    'latestPaidAt' => now()->subDay()->toFormattedDateString(),
+                    'paymentsCount' => 0,
+                    'invoicesCount' => 0,
+                    'paidTotal' => '$0.00',
+                    'latestPaidAt' => '—',
                 ],
                 'payments' => $paymentsPaginated,
                 'invoices' => $invoicesPaginated,
@@ -50,28 +47,32 @@ class WorkspaceBillingController extends Controller
 
     public function pricingPlans(): Response
     {
-        return Inertia::render('Workspace/PricingPlans', array_merge(
-            DemoCatalog::workspacePricingPlans(),
-            ['creditBased' => (bool) config('stripe-lri.credit_based')],
-        ));
+        return Inertia::render('Workspace/PricingPlans', [
+            'creditBased' => (bool) config('stripe-lri.credit_based'),
+            'plans' => [
+                'monthly' => [],
+                'yearly' => [],
+                'lifetime' => [],
+            ],
+            'currentSubscriptions' => [],
+            'yearlyDiscountPercent' => 0,
+        ]);
     }
 
     public function subscription(Request $request): Response
     {
-        $center = DemoCatalog::subscriptionCenter();
-        $history = DemoCatalog::paginate(
-            DemoCatalog::subscriptionHistory(),
-            $request,
-            'subscription.index',
-            8,
-            [8, 12, 25, 50],
-        );
+        $history = $this->emptyPaginator($request, 'subscription.index', 8, [8, 12, 25, 50]);
 
         return Inertia::render('Workspace/Subscription', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
-            'subscriptionCenter' => array_merge($center, [
+            'subscriptionCenter' => [
+                'active' => [],
+                'cancelNotice' => [
+                    'show' => false,
+                    'accessUntil' => '',
+                ],
                 'history' => $history,
-            ]),
+            ],
         ]);
     }
 }

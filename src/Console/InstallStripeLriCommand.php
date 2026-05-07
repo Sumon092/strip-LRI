@@ -89,7 +89,7 @@ class InstallStripeLriCommand extends Command
         $this->line(' • STRIPE_LRI_REGISTER_ROUTES=true (set false in .env if your app already defines the same URLs)');
         $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook (no web.php edits)');
         if (! $skipPublish) {
-            $this->line(' • Billing code lives under app/Http/Controllers/Billing, app/Models/Billing, app/Support/Billing, app/Contracts, app/Services/Billing, app/Console/Commands.');
+            $this->line(' • Published controllers: app/Http/Controllers/Admin (Billing*), Workspace, Webhooks, Concerns; models/support: app/Models/Billing, app/Support/Billing; app/Contracts, app/Services/Billing, app/Console/Commands.');
             $this->line(' • App provider: app/Providers/StripeLriServiceProvider.php (registered in bootstrap/providers.php).');
             $this->line(' • After you verify the app, you may run: composer remove stripe-lri/laravel — the package becomes optional; keep it only if you want stripe-lri:install updates.');
             if (! $creditBased) {
