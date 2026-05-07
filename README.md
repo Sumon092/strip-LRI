@@ -67,7 +67,14 @@ Non-interactive example:
 php artisan stripe-lri:install --no-interaction --credit-based
 ```
 
-Migrations (`stripe_lri_webhook_events`, billing core tables) ship **inside the package** and load via `loadMigrationsFrom`. You do **not** copy migration files unless you intend to fork the schema.
+Migrations ship **inside the package** and load via `loadMigrationsFrom`:
+
+- **Always:** `stripe_lri_webhook_events` and billing core tables (`packages`, `coupons`, `subscriptions`, …) **without** credit-only columns (`credits_limit`, `credits_purchased`) and **without** `credit_wallets` / `credit_types` / `credit_transactions`.
+- **Only when `STRIPE_LRI_CREDIT_BASED=true`:** a second migration set adds those columns and credit tables.
+
+Set `STRIPE_LRI_CREDIT_BASED` **before** the first `migrate` (the installer writes `.env` then runs `migrate` in a subprocess so the flag is picked up). To enable credits later, set the env value to `true` and run `php artisan migrate` again.
+
+You do **not** copy migration files unless you intend to fork the schema.
 
 **Note:** `composer require` cannot safely run Artisan for every project automatically. The supported flow is **`composer require`** then **`php artisan stripe-lri:install`**. To skip migrations (e.g. CI), use `--no-migrate`.
 
@@ -97,7 +104,7 @@ All keys below are read from **`.env`** via `config/stripe-lri.php` (after you p
 
 | Variable | Example | Purpose |
 |----------|---------|---------|
-| `STRIPE_LRI_CREDIT_BASED` | `true` / `false` | From the install prompt; toggles credit-based UI / behavior flags in the app. |
+| `STRIPE_LRI_CREDIT_BASED` | `true` / `false` | From the install prompt. When `false`, credit-only **migrations** (columns + `credit_*` tables) are **not** loaded; credit Artisan commands and credit scheduler entries are **not** registered. |
 | `STRIPE_LRI_REGISTER_ROUTES` | `true` | When `true`, the package registers workspace + admin **billing UI** routes. Set `false` if your app already defines those URLs. |
 | `STRIPE_LRI_REGISTER_WEBHOOK` | `true` | When `true`, registers **`GET` + `POST` `/stripe/webhook`** (no edits to `routes/web.php`). Set `false` only if you define these routes yourself. |
 
@@ -109,9 +116,9 @@ All keys below are read from **`.env`** via `config/stripe-lri.php` (after you p
 | `STRIPE_LRI_USERS_TABLE` | `users` | `users` table name for validation / queries. |
 | `STRIPE_SECRET` **or** `STRIPE_LRI_SECRET` | *(empty)* | Stripe secret API key. |
 | `STRIPE_WEBHOOK_SECRET` **or** `STRIPE_LRI_WEBHOOK_SECRET` | *(empty)* | Stripe webhook signing secret. |
-| `STRIPE_LRI_SCHEDULE_ENABLED` | `false` | When `true`, registers packaged scheduler tasks (see below). |
-| `STRIPE_LRI_SCHEDULE_PROCESS_HISTORY` | `true` | Only used if schedule enabled: hourly `stripe-lri:credits:process-history`. |
-| `STRIPE_LRI_SCHEDULE_MONTHLY_CREDITS` | `true` | Only used if schedule enabled: daily `stripe-lri:credits:add-monthly-for-yearly`. |
+| `STRIPE_LRI_SCHEDULE_ENABLED` | `false` | When `true` **and** `STRIPE_LRI_CREDIT_BASED=true`, registers packaged credit scheduler tasks (see below). |
+| `STRIPE_LRI_SCHEDULE_PROCESS_HISTORY` | `true` | Only if credit-based + schedule enabled: hourly `stripe-lri:credits:process-history`. |
+| `STRIPE_LRI_SCHEDULE_MONTHLY_CREDITS` | `true` | Only if credit-based + schedule enabled: daily `stripe-lri:credits:add-monthly-for-yearly`. |
 
 Bind `StripeLri\Contracts\CreditLedger` in your app before relying on the schedule commands; the default implementation is a no-op.
 
@@ -125,7 +132,7 @@ The **Indexchecker** app (`indexcheckerv2`) implements billing roughly as follow
 
 | Area | Indexchecker |
 |------|----------------|
-| **Core tables** | `packages` (plan_type, billing_cycle, credits_limit, Stripe ids), `subscriptions`, `subscription_items`, `credit_types` (+ `last_monthly_credit_added_at`), `payments`, `invoices`, `orders`, `credit_wallets`, `credit_transactions`, `credits_history`, `coupons` |
+| **Core tables** | Indexchecker: `packages` (plan_type, billing_cycle, `credits_limit` when credit-based, Stripe ids), `subscriptions`, `subscription_items`, `payments`, `invoices`, `orders`, `coupons`, plus when credit-based: `credit_types`, `credit_wallets`, `credit_transactions`, `credits_history` |
 | **Purchase / renewal credits** | `App\Services\CreditTypeService`: `addCreditsForPurchase`, `addCreditsForRenewal` — monthly Stripe renewals reset balance to the period allowance; first month only on purchase for subscription/lifetime patterns |
 | **Yearly + lifetime monthly refill** | `CreditTypeService::addMonthlyCreditsForYearlySubscriptions()` — selects `credit_types` with types `yearly_single`, `yearly_multiple`, `one_time` (lifetime `stripe`/`custom`), active, credits not null, `last_monthly_credit_added_at` null or &gt; 30 days ago; **sets** credits to monthly allowance (does not stack) |
 | **Cron** | `bootstrap/app.php` → `credits:add-monthly-for-yearly` **daily**, `credits:process-history` **hourly** |

@@ -5,8 +5,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Core billing tables (Indexchecker-style) shipped with Stripe-LRI.
- * Loaded via StripeLriServiceProvider::loadMigrationsFrom — run `php artisan migrate` after installing the package.
+ * Billing tables without credit-specific columns or credit_* tables.
+ * Credit schema loads from database/migrations/credits when STRIPE_LRI_CREDIT_BASED=true.
  */
 return new class extends Migration
 {
@@ -19,7 +19,6 @@ return new class extends Migration
             $table->string('plan_type')->default('stripe')->comment('free, stripe, subscription, custom, …');
             $table->decimal('price', 10, 2)->nullable();
             $table->enum('billing_cycle', ['monthly', 'yearly'])->nullable();
-            $table->unsignedInteger('credits_limit')->nullable();
             $table->unsignedInteger('max_devices')->nullable();
             $table->boolean('is_popular')->default(false);
             $table->boolean('is_featured')->default(false);
@@ -113,7 +112,6 @@ return new class extends Migration
             $table->string('stripe_subscription_id')->nullable();
             $table->decimal('amount', 10, 2)->default(0);
             $table->string('currency', 3)->default('USD');
-            $table->integer('credits_purchased')->default(0);
             $table->enum('payment_type', ['single', 'subscription'])->default('single');
             $table->enum('status', ['pending', 'processing', 'completed', 'failed', 'cancelled', 'refunded'])->default('pending');
             $table->json('billing_details')->nullable();
@@ -145,7 +143,6 @@ return new class extends Migration
             $table->decimal('amount', 10, 2);
             $table->decimal('tax_amount', 10, 2)->default(0);
             $table->decimal('total_amount', 10, 2);
-            $table->integer('credits_purchased')->default(0);
             $table->string('currency', 3)->default('USD');
             $table->enum('status', ['draft', 'paid', 'void', 'open', 'uncollectible', 'unpaid'])->default('draft');
             $table->string('stripe_invoice_url')->nullable();
@@ -170,61 +167,10 @@ return new class extends Migration
             $table->timestamp('paid_at')->nullable();
             $table->timestamps();
         });
-
-        Schema::create('credit_wallets', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->unique()->constrained('users')->cascadeOnDelete();
-            $table->unsignedBigInteger('credit_remaining')->default(200);
-            $table->enum('credit_type', [
-                '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
-            ])->default('1');
-            $table->timestamp('credit_added_at')->useCurrent();
-            $table->timestamp('credit_expires_at')->nullable()->index();
-            $table->timestamps();
-        });
-
-        Schema::create('credit_types', function (Blueprint $table) {
-            $table->id();
-            $table->uuid('unique_id')->unique();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('package_id')->constrained()->cascadeOnDelete();
-            $table->string('type');
-            $table->integer('credits')->nullable();
-            $table->timestamp('expires_at')->nullable();
-            $table->timestamp('last_monthly_credit_added_at')->nullable()->index();
-            $table->boolean('is_active')->default(true);
-            $table->boolean('is_selected')->default(false)->nullable();
-            $table->enum('subscription_status', ['active', 'canceled', 'expired'])->default('active');
-            $table->string('stripe_subscription_id')->nullable();
-            $table->json('metadata')->nullable();
-            $table->timestamps();
-
-            $table->index(['user_id', 'package_id', 'type']);
-            $table->index(['user_id', 'is_active']);
-            $table->index(['user_id', 'is_selected']);
-            $table->index(['user_id', 'subscription_status']);
-            $table->index('stripe_subscription_id');
-            $table->index('expires_at');
-        });
-
-        Schema::create('credit_transactions', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('wallet_id')->constrained('credit_wallets')->cascadeOnDelete();
-            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
-            $table->enum('type', ['purchase', 'spend', 'refund', 'admin_add', 'admin_remove']);
-            $table->bigInteger('amount');
-            $table->string('ref_type')->nullable();
-            $table->unsignedBigInteger('ref_id')->nullable();
-            $table->text('description')->nullable();
-            $table->timestamps();
-        });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('credit_transactions');
-        Schema::dropIfExists('credit_types');
-        Schema::dropIfExists('credit_wallets');
         Schema::dropIfExists('orders');
         Schema::dropIfExists('invoices');
         Schema::dropIfExists('payments');

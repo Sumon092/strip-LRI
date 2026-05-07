@@ -29,7 +29,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | Set via `php artisan stripe-lri:install` or STRIPE_LRI_CREDIT_BASED.
-    | Exposed to the frontend for conditional UI (credits vs seat-only).
+    | When false: credit-only migrations, credit Artisan commands, and credit
+    | scheduler hooks are not registered. Set true before first migrate if you
+    | need credits schema; changing later requires `php artisan migrate` again.
     |
     */
     'credit_based' => (bool) env('STRIPE_LRI_CREDIT_BASED', false),
@@ -66,6 +68,8 @@ return [
     |--------------------------------------------------------------------------
     | Scheduler (Indexchecker parity)
     |--------------------------------------------------------------------------
+    |
+    | Only applied when credit_based is true (see above).
     |
     | Indexchecker registers in bootstrap/app.php:
     | - credits:process-history hourly

@@ -20,7 +20,11 @@ class StripeLriServiceProvider extends ServiceProvider
 
         $this->app->singletonIf(CreditLedger::class, fn (): CreditLedger => new NullCreditLedger);
 
-        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations/core');
+
+        if ((bool) $this->app->make('config')->get('stripe-lri.credit_based')) {
+            $this->loadMigrationsFrom(__DIR__.'/../database/migrations/credits');
+        }
     }
 
     public function boot(): void
@@ -30,11 +34,14 @@ class StripeLriServiceProvider extends ServiceProvider
         ], 'stripe-lri-config');
 
         if ($this->app->runningInConsole()) {
-            $this->commands([
-                InstallStripeLriCommand::class,
-                AddMonthlyCreditsForYearlyCommand::class,
-                ProcessCreditsHistoryCommand::class,
-            ]);
+            $this->commands([InstallStripeLriCommand::class]);
+
+            if (config('stripe-lri.credit_based')) {
+                $this->commands([
+                    AddMonthlyCreditsForYearlyCommand::class,
+                    ProcessCreditsHistoryCommand::class,
+                ]);
+            }
         }
 
         $this->registerScheduledTasks();
@@ -65,6 +72,10 @@ class StripeLriServiceProvider extends ServiceProvider
     protected function registerScheduledTasks(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            if (! config('stripe-lri.credit_based')) {
+                return;
+            }
+
             if (! config('stripe-lri.schedule.enabled', false)) {
                 return;
             }

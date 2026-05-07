@@ -3,9 +3,9 @@
 namespace StripeLri\Console;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Symfony\Component\Console\Attribute\AsCommand;
+use Symfony\Component\Process\Process;
 
 #[AsCommand(name: 'stripe-lri:install')]
 class InstallStripeLriCommand extends Command
@@ -47,9 +47,14 @@ class InstallStripeLriCommand extends Command
             $this->newLine();
             $this->components->info('Running migrations (Stripe-LRI tables from package)...');
             try {
-                $code = Artisan::call('migrate', ['--force' => true]);
-                if ($code !== 0) {
-                    $this->components->warn('migrate exited with code '.$code.'. Check output above.');
+                // Subprocess so a fresh bootstrap reads STRIPE_LRI_CREDIT_BASED from .env (same-process migrate would not).
+                $process = new Process([PHP_BINARY, 'artisan', 'migrate', '--force'], base_path());
+                $process->setTimeout(null);
+                $process->run(function (string $type, string $buffer): void {
+                    $this->output->write($buffer);
+                });
+                if (! $process->isSuccessful()) {
+                    $this->components->warn('migrate exited with code '.$process->getExitCode().'. Check output above.');
 
                     return self::FAILURE;
                 }
