@@ -5,8 +5,11 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Core billing: eight tables installed with every Stripe-LRI app.
- * Credit-only tables / columns load from database/migrations/credits when STRIPE_LRI_CREDIT_BASED=true.
+ * Core billing: exactly **nine** tables when STRIPE_LRI_CREDIT_BASED=false:
+ * subscription_products, subscription_product_items, subscription_product_prices,
+ * subscriptions, subscription_items, subscription_product_user, payments, invoices, coupons.
+ *
+ * When credit-based is true, credits migrations add **credit_ledger** (10th table) plus credit columns.
  */
 return new class extends Migration
 {
@@ -171,10 +174,33 @@ return new class extends Migration
             $table->index('invoice_number');
             $table->index('stripe_invoice_id');
         });
+
+        Schema::create('coupons', function (Blueprint $table) {
+            $table->id();
+            $table->string('code')->unique();
+            $table->string('name')->nullable();
+            $table->string('stripe_coupon_id')->nullable()->unique();
+            $table->unsignedTinyInteger('percent_off')->nullable();
+            $table->unsignedBigInteger('amount_off')->nullable();
+            $table->string('currency', 3)->nullable();
+            $table->string('duration', 32)->default('once');
+            $table->unsignedInteger('duration_in_months')->nullable();
+            $table->unsignedInteger('max_redemptions')->nullable();
+            $table->unsignedInteger('times_redeemed')->default(0);
+            $table->timestamp('redeem_by')->nullable();
+            $table->boolean('active')->default(true);
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+
+            $table->index('active', 'coupons_active_idx');
+            $table->index('stripe_coupon_id', 'coupons_stripe_cpn_idx');
+        });
     }
 
     public function down(): void
     {
+        Schema::dropIfExists('coupons');
         Schema::dropIfExists('invoices');
         Schema::dropIfExists('payments');
         Schema::dropIfExists('subscription_product_user');

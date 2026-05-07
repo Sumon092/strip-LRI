@@ -55,7 +55,7 @@ Use any path to the folder that contains this package’s `composer.json`.
 
 ### After `composer require`
 
-Laravel **auto-discovers** `StripeLriServiceProvider` (see `composer.json` → `extra.laravel.providers`). Run **one** installer command — it publishes config, writes `.env`, registers **`/stripe/webhook` (GET + POST) from the package** (no `routes/web.php` edits), and runs **`php artisan migrate`** unless you pass `--no-migrate`:
+Laravel **auto-discovers** `StripeLriServiceProvider` (see `composer.json` → `extra.laravel.providers`). Run **one** installer command — it publishes config, copies **workable code into your app** (default), writes `.env`, and runs **`php artisan migrate`** unless you pass `--no-migrate`:
 
 ```bash
 php artisan stripe-lri:install
@@ -67,14 +67,23 @@ Non-interactive example:
 php artisan stripe-lri:install --no-interaction --credit-based
 ```
 
-Migrations ship **inside the package** and load via `loadMigrationsFrom`:
+**Default install (no `--skip-app-publish`):**
 
-- **Always:** `stripe_lri_webhook_events` plus these **eight** billing tables: `subscription_products`, `subscription_product_items`, `subscription_product_prices`, `subscriptions`, `subscription_items`, `subscription_product_user`, `payments`, `invoices`. (The admin “packages” UI maps to `subscription_products`.)
-- **Only when `STRIPE_LRI_CREDIT_BASED=true`:** a second migration set adds `credit_ledger` and credit columns (`credits_limit` on products, `credits_purchased` on payments/invoices, `credits_balance` / `credits_expires_at` on `subscription_product_user`).
+- **`app/StripeLri/`** — controllers, models, form requests, and support classes (namespace `App\StripeLri\…`), transformed from the package so you edit your app, not `vendor`.
+- **`database/migrations/`** — copies the same migration PHP files from the package; with `STRIPE_LRI_PUBLISHED_TO_APP=true` the provider **stops** `loadMigrationsFrom` on the package so only these app migrations run.
+- **`routes/stripe-lri.php`** — three-line file that calls `StripeLri\Routing\StripeLriRouteRegistrar::register('App\StripeLri\Http\Controllers')` (route *definitions* stay in the small package registrar; **handlers** are your app classes).
 
-Set `STRIPE_LRI_CREDIT_BASED` **before** the first `migrate` (the installer writes `.env` then runs `migrate` in a subprocess so the flag is picked up). To enable credits later, set the env value to `true` and run `php artisan migrate` again.
+Use **`--skip-app-publish`** only if you want the legacy vendor-only mode (controllers and migrations resolved from the package).
 
-You do **not** copy migration files unless you intend to fork the schema.
+**Tables** (same as before):
+
+- **When `STRIPE_LRI_CREDIT_BASED=false`:** exactly **nine** tables — `subscription_products`, `subscription_product_items`, `subscription_product_prices`, `subscriptions`, `subscription_items`, `subscription_product_user`, `payments`, `invoices`, **`coupons`**. (Admin “packages” maps to `subscription_products`.)
+- **When `STRIPE_LRI_CREDIT_BASED=true`:** those nine plus **`credit_ledger`** (tenth table) and credit columns (`credits_limit` on products, `credits_purchased` on payments/invoices, `credits_balance` / `credits_expires_at` on `subscription_product_user`). No extra `credit_wallets` / `credit_types` / `credit_transactions` tables.
+- **Webhook idempotency** is not stored in a package table by default; implement dedupe in your app (e.g. `processed_stripe_events`) if you need it.
+
+Set `STRIPE_LRI_CREDIT_BASED` **before** the first `migrate` (the installer writes `.env` then runs `migrate` in a subprocess so the flag is picked up). If you later turn credits on and used a non–credit-based install, run **`stripe-lri:install --credit-based --force`** so credit migrations are copied, then migrate again.
+
+Re-copy the latest package sources into `app/StripeLri` with **`stripe-lri:install --force`** (overwrites published PHP, migrations, and `routes/stripe-lri.php` where applicable).
 
 **Note:** `composer require` cannot safely run Artisan for every project automatically. The supported flow is **`composer require`** then **`php artisan stripe-lri:install`**. To skip migrations (e.g. CI), use `--no-migrate`.
 
@@ -132,7 +141,7 @@ The **Indexchecker** app (`indexcheckerv2`) implements billing roughly as follow
 
 | Area | Indexchecker |
 |------|----------------|
-| **Core tables (this package)** | `subscription_products` (+ nested `subscription_product_items` / `subscription_product_prices`), `subscriptions`, `subscription_items`, `subscription_product_user`, `payments`, `invoices`. Credit-based adds `credit_ledger` and the credit columns above. Indexchecker used a different shape (`packages`, `credit_types`, wallets, etc.) — port that logic into your own `CreditLedger` binding. |
+| **Core tables (this package)** | Nine: `subscription_products` (+ `subscription_product_items` / `subscription_product_prices`), `subscriptions`, `subscription_items`, `subscription_product_user`, `payments`, `invoices`, **`coupons`**. Credit-based adds a tenth table, **`credit_ledger`**, plus credit columns. Indexchecker used a different shape — port that logic into your own `CreditLedger` binding. |
 | **Purchase / renewal credits** | `App\Services\CreditTypeService`: `addCreditsForPurchase`, `addCreditsForRenewal` — monthly Stripe renewals reset balance to the period allowance; first month only on purchase for subscription/lifetime patterns |
 | **Yearly + lifetime monthly refill** | `CreditTypeService::addMonthlyCreditsForYearlySubscriptions()` — selects `credit_types` with types `yearly_single`, `yearly_multiple`, `one_time` (lifetime `stripe`/`custom`), active, credits not null, `last_monthly_credit_added_at` null or &gt; 30 days ago; **sets** credits to monthly allowance (does not stack) |
 | **Cron** | `bootstrap/app.php` → `credits:add-monthly-for-yearly` **daily**, `credits:process-history` **hourly** |

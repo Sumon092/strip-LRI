@@ -1,25 +1,23 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 
+/**
+ * Legacy filename kept for migration history. Stripe-LRI no longer creates
+ * `stripe_lri_webhook_events` — the default schema is exactly 9 tables (no credit)
+ * or 10 with credit; use your app for webhook idempotency if needed.
+ *
+ * @see 2026_05_09_000000_drop_stripe_lri_webhook_events_table
+ */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('stripe_lri_webhook_events', function (Blueprint $table) {
-            $table->id();
-            $table->string('stripe_event_id')->unique();
-            $table->string('type')->index();
-            $table->timestamp('processed_at')->useCurrent();
-
-            $table->index('processed_at');
-        });
+        // Intentionally empty.
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('stripe_lri_webhook_events');
+        // Intentionally empty.
     }
 };

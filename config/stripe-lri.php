@@ -38,6 +38,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Application code published into the host app
+    |--------------------------------------------------------------------------
+    |
+    | When true (set by `php artisan stripe-lri:install`), controllers, models,
+    | requests, and support live under app/StripeLri; migrations are copied to
+    | database/migrations; routes/stripe-lri.php is created. The package no longer
+    | loads migrations from vendor for this app.
+    |
+    */
+    'published_to_app' => (bool) env('STRIPE_LRI_PUBLISHED_TO_APP', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Eloquent user model
     |--------------------------------------------------------------------------
     */

@@ -4,6 +4,7 @@ namespace StripeLri\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
+use StripeLri\Support\ApplicationCodePublisher;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Process\Process;
 
@@ -11,12 +12,13 @@ use Symfony\Component\Process\Process;
 class InstallStripeLriCommand extends Command
 {
     protected $signature = 'stripe-lri:install
-                            {--force : Overwrite published config}
+                            {--force : Overwrite published config, app sources, routes, and migrations}
                             {--no-migrate : Skip running database migrations}
                             {--credit-based : Mark app as credit-based (non-interactive)}
-                            {--no-credit-based : Mark app as not credit-based (non-interactive)}';
+                            {--no-credit-based : Mark app as not credit-based (non-interactive)}
+                            {--skip-app-publish : Keep controllers/migrations in vendor only (no app/StripeLri copy)}';
 
-    protected $description = 'Publish Stripe-LRI config, set .env flags, register webhooks (no web.php edits), and run migrations unless skipped.';
+    protected $description = 'Publish config, copy workable PHP + migrations into the host app, set .env, and run migrations unless skipped.';
 
     public function handle(): int
     {
@@ -43,9 +45,23 @@ class InstallStripeLriCommand extends Command
         $this->writeEnvBool('STRIPE_LRI_REGISTER_ROUTES', true);
         $this->writeEnvBool('STRIPE_LRI_REGISTER_WEBHOOK', true);
 
+        $skipPublish = (bool) $this->option('skip-app-publish');
+        $this->writeEnvBool('STRIPE_LRI_PUBLISHED_TO_APP', ! $skipPublish);
+
+        if (! $skipPublish) {
+            $this->newLine();
+            $this->components->info('Publishing Stripe-LRI code into your application (app/StripeLri, database/migrations, routes/stripe-lri.php)...');
+            $publisher = new ApplicationCodePublisher;
+            foreach ($publisher->publishAll((bool) $this->option('force'), $creditBased, $this->output) as $line) {
+                $this->line(' • '.$line);
+            }
+        } else {
+            $this->components->warn('Skipped publishing app sources (--skip-app-publish). Routes and migrations load from the package.');
+        }
+
         if (! $this->option('no-migrate')) {
             $this->newLine();
-            $this->components->info('Running migrations (Stripe-LRI tables from package)...');
+            $this->components->info('Running migrations...');
             try {
                 // Subprocess so a fresh bootstrap reads STRIPE_LRI_CREDIT_BASED from .env (same-process migrate would not).
                 $process = new Process([PHP_BINARY, 'artisan', 'migrate', '--force'], base_path());
@@ -69,8 +85,15 @@ class InstallStripeLriCommand extends Command
         $this->newLine();
         $this->components->info('Stripe-LRI configured.');
         $this->line(' • STRIPE_LRI_CREDIT_BASED='.($creditBased ? 'true' : 'false'));
+        $this->line(' • STRIPE_LRI_PUBLISHED_TO_APP='.($skipPublish ? 'false' : 'true'));
         $this->line(' • STRIPE_LRI_REGISTER_ROUTES=true (set false in .env if your app already defines the same URLs)');
-        $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook is registered by the package (no web.php edits)');
+        $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook (no web.php edits)');
+        if (! $skipPublish) {
+            $this->line(' • Controllers & domain code: app/StripeLri — edit there; re-run install with --force to refresh from the package.');
+            if (! $creditBased) {
+                $this->line(' • Later, to add credit migrations into this app: php artisan stripe-lri:install --credit-based --force');
+            }
+        }
         $this->newLine();
         $this->line('Run `php artisan config:clear` if config is cached.');
 
