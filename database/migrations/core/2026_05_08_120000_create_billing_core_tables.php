@@ -5,18 +5,18 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Billing tables without credit-specific columns or credit_* tables.
- * Credit schema loads from database/migrations/credits when STRIPE_LRI_CREDIT_BASED=true.
+ * Core billing: eight tables installed with every Stripe-LRI app.
+ * Credit-only tables / columns load from database/migrations/credits when STRIPE_LRI_CREDIT_BASED=true.
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('packages', function (Blueprint $table) {
+        Schema::create('subscription_products', function (Blueprint $table) {
             $table->id();
             $table->string('plan_name');
             $table->text('description')->nullable();
-            $table->string('plan_type')->default('stripe')->comment('free, stripe, subscription, custom, …');
+            $table->string('plan_type')->default('stripe_plan');
             $table->decimal('price', 10, 2)->nullable();
             $table->enum('billing_cycle', ['monthly', 'yearly'])->nullable();
             $table->unsignedInteger('max_devices')->nullable();
@@ -40,35 +40,36 @@ return new class extends Migration
             $table->index('stripe_product_id');
         });
 
-        Schema::create('coupons', function (Blueprint $table) {
+        Schema::create('subscription_product_items', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('subscription_product_id')->constrained('subscription_products')->cascadeOnDelete();
             $table->string('name');
-            $table->string('code')->unique();
-            $table->text('description')->nullable();
-            $table->enum('type', ['fixed_amount', 'percentage']);
-            $table->decimal('value', 10, 2);
-            $table->string('currency', 3)->default('USD');
-            $table->integer('max_redemptions')->nullable();
-            $table->integer('times_redeemed')->default(0);
-            $table->boolean('active')->default(true);
-            $table->date('valid_from')->nullable();
-            $table->date('valid_until')->nullable();
-            $table->string('stripe_coupon_id')->nullable()->unique();
-            $table->string('stripe_promotion_code_id')->nullable()->index();
-            $table->boolean('custom_validation_rules')->default(false);
-            $table->boolean('valid_for_new_users_only')->default(false);
+            $table->unsignedInteger('sort_order')->default(0);
+            $table->json('metadata')->nullable();
             $table->timestamps();
-            $table->softDeletes();
 
-            $table->index('code');
-            $table->index('active');
-            $table->index(['valid_from', 'valid_until']);
+            $table->index(['subscription_product_id', 'sort_order'], 'spi_spid_sort_idx');
+        });
+
+        Schema::create('subscription_product_prices', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('subscription_product_id')->constrained('subscription_products')->cascadeOnDelete();
+            $table->string('plan_type', 32);
+            $table->string('stripe_price_id')->nullable();
+            $table->decimal('amount', 10, 2)->default(0);
+            $table->string('currency', 3)->default('usd');
+            $table->string('nickname')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+
+            $table->index(['subscription_product_id', 'plan_type'], 'spp_spid_plan_idx');
+            $table->index('stripe_price_id');
         });
 
         Schema::create('subscriptions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('package_id')->nullable()->constrained('packages')->nullOnDelete();
+            $table->foreignId('subscription_product_id')->nullable()->constrained('subscription_products')->nullOnDelete();
             $table->string('stripe_subscription_id')->nullable();
             $table->string('name')->nullable();
             $table->boolean('cancel_at_period_end')->default(false);
@@ -103,10 +104,26 @@ return new class extends Migration
             $table->index('subscription_id');
         });
 
+        Schema::create('subscription_product_user', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('subscription_product_id')->constrained('subscription_products')->cascadeOnDelete();
+            $table->string('stripe_subscription_id')->nullable()->index();
+            $table->boolean('is_active')->default(true);
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('expires_at')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+
+            $table->unique(['user_id', 'subscription_product_id'], 'spu_user_product_uidx');
+            $table->index(['subscription_product_id', 'is_active'], 'spu_spid_active_idx');
+        });
+
         Schema::create('payments', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('package_id')->nullable()->constrained('packages')->nullOnDelete();
+            $table->foreignId('subscription_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('subscription_product_id')->nullable()->constrained('subscription_products')->nullOnDelete();
             $table->string('stripe_payment_intent_id')->nullable();
             $table->string('stripe_charge_id')->nullable();
             $table->string('stripe_subscription_id')->nullable();
@@ -132,7 +149,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('payment_id')->nullable()->constrained('payments')->cascadeOnDelete();
-            $table->foreignId('package_id')->nullable()->constrained('packages')->nullOnDelete();
+            $table->foreignId('subscription_product_id')->nullable()->constrained('subscription_products')->nullOnDelete();
             $table->string('invoice_number')->unique();
             $table->string('stripe_invoice_id')->nullable();
             $table->string('payment_intent_id')->nullable();
@@ -154,29 +171,17 @@ return new class extends Migration
             $table->index('invoice_number');
             $table->index('stripe_invoice_id');
         });
-
-        Schema::create('orders', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
-            $table->foreignId('package_id')->nullable()->constrained('packages')->nullOnDelete();
-            $table->enum('status', ['pending', 'paid', 'failed', 'refunded', 'canceled'])->default('pending');
-            $table->unsignedInteger('amount_cents')->default(0);
-            $table->string('currency', 3)->default('USD');
-            $table->string('provider')->nullable();
-            $table->string('provider_charge_id')->nullable();
-            $table->timestamp('paid_at')->nullable();
-            $table->timestamps();
-        });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('orders');
         Schema::dropIfExists('invoices');
         Schema::dropIfExists('payments');
+        Schema::dropIfExists('subscription_product_user');
         Schema::dropIfExists('subscription_items');
         Schema::dropIfExists('subscriptions');
-        Schema::dropIfExists('coupons');
-        Schema::dropIfExists('packages');
+        Schema::dropIfExists('subscription_product_prices');
+        Schema::dropIfExists('subscription_product_items');
+        Schema::dropIfExists('subscription_products');
     }
 };

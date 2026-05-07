@@ -7,23 +7,36 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 use StripeLri\Http\Controllers\Controller;
-use StripeLri\Support\DemoCatalog;
+use StripeLri\Http\Requests\StorePackageRequest;
+use StripeLri\Http\Requests\UpdatePackageRequest;
+use StripeLri\Models\Package;
+use StripeLri\Support\PackagePresenter;
 
 class AdminPackagesController extends Controller
 {
     public function index(Request $request): Response
     {
-        $products = DemoCatalog::paginate(
-            DemoCatalog::products(),
-            $request,
-            'admin.packages.index',
-            10,
-            [10, 12, 25, 50]
+        $perPage = (int) $request->query('per_page', 10);
+        if (! in_array($perPage, [10, 12, 25, 50], true)) {
+            $perPage = 10;
+        }
+
+        $paginator = Package::query()
+            ->with(['items', 'prices'])
+            ->orderBy('sort_order')
+            ->orderByDesc('id')
+            ->paginate($perPage)
+            ->withQueryString();
+
+        $paginator->setCollection(
+            $paginator->getCollection()->map(
+                static fn (Package $p): array => PackagePresenter::toIndexRow($p),
+            ),
         );
 
         return Inertia::render('Admin/Packages/Index', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
-            'products' => $products,
+            'products' => $paginator,
         ]);
     }
 
@@ -31,50 +44,54 @@ class AdminPackagesController extends Controller
     {
         return Inertia::render('Admin/Packages/Create', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
-            'form' => DemoCatalog::emptyPackageForm(),
+            'form' => PackagePresenter::emptyForm(),
         ]);
     }
 
     public function edit(int $package): Response
     {
-        $product = DemoCatalog::findProduct($package);
-        if ($product === null) {
-            abort(404);
-        }
+        $model = Package::query()
+            ->with(['items', 'prices'])
+            ->whereKey($package)
+            ->firstOrFail();
 
         return Inertia::render('Admin/Packages/Edit', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
-            'productId' => $package,
-            'form' => DemoCatalog::packageFormFromProduct($product),
+            'productId' => (int) $model->getKey(),
+            'form' => PackagePresenter::toForm($model),
         ]);
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(StorePackageRequest $request): RedirectResponse
     {
+        $validated = $request->validated();
+        $package = Package::query()->create(PackagePresenter::validatedToAttributes($validated));
+        PackagePresenter::syncChildTables($package, $validated);
+
         return redirect()
             ->route('admin.packages.index')
-            ->with('success', 'Stripe-LRI demo: package was not persisted. Implement persistence in your app or extend the package.');
+            ->with('success', 'Package created.');
     }
 
-    public function update(Request $request, int $package): RedirectResponse
+    public function update(UpdatePackageRequest $request, int $package): RedirectResponse
     {
-        if (DemoCatalog::findProduct($package) === null) {
-            abort(404);
-        }
+        $model = Package::query()->whereKey($package)->firstOrFail();
+        $validated = $request->validated();
+        $model->fill(PackagePresenter::validatedToAttributes($validated));
+        $model->save();
+        PackagePresenter::syncChildTables($model, $validated);
 
         return redirect()
             ->route('admin.packages.index')
-            ->with('success', 'Stripe-LRI demo: package was not saved.');
+            ->with('success', 'Package updated.');
     }
 
     public function destroy(int $package): RedirectResponse
     {
-        if (DemoCatalog::findProduct($package) === null) {
-            abort(404);
-        }
+        Package::query()->whereKey($package)->firstOrFail()->delete();
 
         return redirect()
             ->route('admin.packages.index')
-            ->with('success', 'Stripe-LRI demo: delete is a no-op until you connect Stripe + database.');
+            ->with('success', 'Package deleted.');
     }
 }

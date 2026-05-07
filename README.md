@@ -69,8 +69,8 @@ php artisan stripe-lri:install --no-interaction --credit-based
 
 Migrations ship **inside the package** and load via `loadMigrationsFrom`:
 
-- **Always:** `stripe_lri_webhook_events` and billing core tables (`packages`, `coupons`, `subscriptions`, …) **without** credit-only columns (`credits_limit`, `credits_purchased`) and **without** `credit_wallets` / `credit_types` / `credit_transactions`.
-- **Only when `STRIPE_LRI_CREDIT_BASED=true`:** a second migration set adds those columns and credit tables.
+- **Always:** `stripe_lri_webhook_events` plus these **eight** billing tables: `subscription_products`, `subscription_product_items`, `subscription_product_prices`, `subscriptions`, `subscription_items`, `subscription_product_user`, `payments`, `invoices`. (The admin “packages” UI maps to `subscription_products`.)
+- **Only when `STRIPE_LRI_CREDIT_BASED=true`:** a second migration set adds `credit_ledger` and credit columns (`credits_limit` on products, `credits_purchased` on payments/invoices, `credits_balance` / `credits_expires_at` on `subscription_product_user`).
 
 Set `STRIPE_LRI_CREDIT_BASED` **before** the first `migrate` (the installer writes `.env` then runs `migrate` in a subprocess so the flag is picked up). To enable credits later, set the env value to `true` and run `php artisan migrate` again.
 
@@ -132,7 +132,7 @@ The **Indexchecker** app (`indexcheckerv2`) implements billing roughly as follow
 
 | Area | Indexchecker |
 |------|----------------|
-| **Core tables** | Indexchecker: `packages` (plan_type, billing_cycle, `credits_limit` when credit-based, Stripe ids), `subscriptions`, `subscription_items`, `payments`, `invoices`, `orders`, `coupons`, plus when credit-based: `credit_types`, `credit_wallets`, `credit_transactions`, `credits_history` |
+| **Core tables (this package)** | `subscription_products` (+ nested `subscription_product_items` / `subscription_product_prices`), `subscriptions`, `subscription_items`, `subscription_product_user`, `payments`, `invoices`. Credit-based adds `credit_ledger` and the credit columns above. Indexchecker used a different shape (`packages`, `credit_types`, wallets, etc.) — port that logic into your own `CreditLedger` binding. |
 | **Purchase / renewal credits** | `App\Services\CreditTypeService`: `addCreditsForPurchase`, `addCreditsForRenewal` — monthly Stripe renewals reset balance to the period allowance; first month only on purchase for subscription/lifetime patterns |
 | **Yearly + lifetime monthly refill** | `CreditTypeService::addMonthlyCreditsForYearlySubscriptions()` — selects `credit_types` with types `yearly_single`, `yearly_multiple`, `one_time` (lifetime `stripe`/`custom`), active, credits not null, `last_monthly_credit_added_at` null or &gt; 30 days ago; **sets** credits to monthly allowance (does not stack) |
 | **Cron** | `bootstrap/app.php` → `credits:add-monthly-for-yearly` **daily**, `credits:process-history` **hourly** |
@@ -147,4 +147,4 @@ Set `STRIPE_LRI_SCHEDULE_ENABLED=true` and bind `CreditLedger` in your `AppServi
 
 ## Next steps
 
-Persist packages, coupons, and payments in **your** database (or extend this package). Controllers currently return **demo** payloads via `StripeLri\Support\DemoCatalog` so Inertia pages render without Stripe keys.
+Subscription products are persisted via `StripeLri\Http\Controllers\Admin\AdminPackagesController` and child tables. Other admin billing screens (coupons, transactions, invoices list) still use **demo** payloads from `StripeLri\Support\DemoCatalog` until you wire them to your data.

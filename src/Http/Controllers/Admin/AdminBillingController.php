@@ -81,6 +81,8 @@ class AdminBillingController extends Controller
 
         $allProducts = collect(DemoCatalog::premiumInvoices())->pluck('product')->unique()->values()->all();
 
+        $allPremium = DemoCatalog::premiumInvoices();
+
         return Inertia::render('Admin/PremiumCustomers', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
             'invoices' => $invoices,
@@ -100,6 +102,14 @@ class AdminBillingController extends Controller
                     ['value' => 'active', 'label' => 'Active'],
                     ['value' => 'canceled', 'label' => 'Canceled'],
                 ],
+            ],
+            'stats' => [
+                'total' => count($allPremium),
+                'active' => collect($allPremium)->where('subscriptionStatus', 'Active')->count(),
+                'paidTotal' => '$24,000.00',
+                'monthlyRenewalsThisMonth' => '42',
+                'yearlyRenewalsThisMonth' => '18',
+                'lifetimeRenewalsThisMonth' => '3',
             ],
         ]);
     }
