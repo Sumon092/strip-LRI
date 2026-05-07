@@ -3,10 +3,10 @@
     "description": "Stripe-LRI: Stripe-oriented billing, subscriptions, and admin commerce routes for Laravel + Inertia (standalone stripe/stripe-php).",
     "type": "library",
     "license": "MIT",
-    "homepage": "https://github.com/your-vendor/stripe-lri",
+    "homepage": "https://github.com/Sumon092/strip-LRI",
     "support": {
-        "issues": "https://github.com/your-vendor/stripe-lri/issues",
-        "source": "https://github.com/your-vendor/stripe-lri"
+        "issues": "https://github.com/Sumon092/strip-LRI/issues",
+        "source": "https://github.com/Sumon092/strip-LRI"
     },
     "keywords": ["laravel", "stripe", "billing", "inertia", "subscriptions"],
     "require": {
