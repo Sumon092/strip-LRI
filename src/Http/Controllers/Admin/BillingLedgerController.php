@@ -40,6 +40,7 @@ class BillingLedgerController extends Controller
                 'status'        => ucfirst((string) $p->status),
                 'statusVariant' => self::paymentVariant((string) $p->status),
                 'date'          => self::fmt($p->paid_at ?? $p->created_at),
+                'createdAt'     => ($p->paid_at ?? $p->created_at)?->toIso8601String() ?? '',
             ]),
         );
 
@@ -171,10 +172,16 @@ class BillingLedgerController extends Controller
             $plans->map(fn (Package $p): array => ['value' => (string) $p->getKey(), 'label' => (string) $p->plan_name])->all(),
         );
 
+        $paidTotal = (float) Payment::query()
+            ->where('status', 'completed')
+            ->whereMonth('paid_at', now()->month)
+            ->whereYear('paid_at', now()->year)
+            ->sum('amount');
+
         $stats = [
             'total'                    => SubscriptionProductUser::count(),
             'active'                   => SubscriptionProductUser::where('is_active', true)->count(),
-            'paidTotal'                => '$0.00',
+            'paidTotal'                => self::money($paidTotal),
             'monthlyRenewalsThisMonth' => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('billing_cycle', 'monthly'))->count(),
             'yearlyRenewalsThisMonth'  => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('billing_cycle', 'yearly'))->count(),
             'lifetimeRenewalsThisMonth' => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('plan_type', 'custom')->orWhere('billing_cycle', null))->count(),

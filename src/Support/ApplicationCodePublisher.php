@@ -550,12 +550,17 @@ PHP;
     }
 
     /**
-     * Remove stub billing route registrations from routes/web.php that would shadow the real
-     * billing controllers published by stripe-lri. Returns true if the file was changed.
+     * Patch routes/web.php so that billing pages are served by the real published controllers
+     * rather than stub/demo controllers. Handles the admin-template starter kit pattern where
+     * stub controllers (AdminUsersController, AdminPackagesController, etc.) are wired to billing
+     * routes inside a prefix('admin') group with relative paths. Returns true if changed.
      *
-     * Detects stub controller imports and Route calls for the URL prefixes owned by stripe-lri:
-     * /admin/users, /admin/packages, /admin/coupons, /admin/transactions, /admin/invoices,
-     * /admin/premium-customers, /billing-history, /subscription, /checkout, /dashboard/pricing-plans.
+     * Strategy:
+     *  1. Replace stub controller class references with real billing controller references in Route:: calls.
+     *  2. Swap use-imports accordingly (remove stubs, inject real billing controller imports).
+     *  3. Inject missing route verbs (DELETE for packages, DELETE for coupons, revenue-month endpoint).
+     *  4. Append workspace billing routes (billing-history, pricing-plans, subscription, checkout) if absent.
+     *  5. Append Stripe webhook routes if absent.
      */
     private function patchWebRoutes(?OutputInterface $output): bool
     {
@@ -564,90 +569,128 @@ PHP;
             return false;
         }
 
-        $original = $this->files->get($webRoutes);
-        $lines = explode("\n", $original);
-        $filtered = [];
-        $changed = false;
+        $content  = $this->files->get($webRoutes);
+        $original = $content;
 
-        // Controller class names used by stub/placeholder code that stripe-lri replaces.
-        $stubControllers = [
-            'BillingUsersController',
-            'BillingPackagesController',
-            'BillingCouponsController',
-            'BillingLedgerController',
-            'WorkspaceBillingController',
-        ];
-
-        // URL prefixes registered in stripe-lri.php — drop Route:: lines touching these.
-        $ownedPrefixes = [
-            '/admin/users',
-            '/admin/packages',
-            '/admin/coupons',
-            '/admin/transactions',
-            '/admin/invoices',
-            '/admin/premium-customers',
-            '/billing-history',
-            '/subscription',
-            '/checkout',
-            '/dashboard/pricing-plans',
-            '/stripe/webhook',
-        ];
-
-        foreach ($lines as $line) {
-            $trimmed = ltrim($line);
-
-            // Drop use-import lines for stub controllers.
-            $isStubImport = false;
-            foreach ($stubControllers as $ctrl) {
-                if (preg_match('/^use\s+.*'.preg_quote($ctrl, '/').'/', $trimmed)) {
-                    $isStubImport = true;
-                    break;
-                }
-            }
-            if ($isStubImport) {
-                $changed = true;
-                $output?->writeln(' <fg=gray>patch web.php</> removed import: '.trim($line), OutputInterface::VERBOSITY_VERBOSE);
-                continue;
-            }
-
-            // Drop Route:: lines that register an owned URL (single-line form).
-            $isOwnedRoute = false;
-            if (str_contains($trimmed, 'Route::')) {
-                foreach ($ownedPrefixes as $prefix) {
-                    // Match '/prefix', '/prefix/...' in both quote styles.
-                    if (str_contains($line, "'".$prefix) || str_contains($line, '"'.$prefix)) {
-                        $isOwnedRoute = true;
-                        break;
-                    }
-                }
-            }
-
-            if ($isOwnedRoute) {
-                $changed = true;
-                $output?->writeln(' <fg=gray>patch web.php</> removed route: '.trim($line), OutputInterface::VERBOSITY_VERBOSE);
-                continue;
-            }
-
-            $filtered[] = $line;
+        // ── 1. Replace stub Route:: controller class references ───────────────
+        // AdminSectionController billing-method redirects (only billing methods, not accountLogs/credentials)
+        $billingMethodsOnSectionController = ['transactions', 'invoices', 'premiumCustomers'];
+        foreach ($billingMethodsOnSectionController as $method) {
+            $content = str_replace(
+                "[AdminSectionController::class, '{$method}']",
+                "[BillingLedgerController::class, '{$method}']",
+                $content,
+            );
         }
 
-        if (! $changed) {
+        // Full stub-controller → real-controller swaps
+        $classSwaps = [
+            'AdminUsersController::class'    => 'BillingUsersController::class',
+            'AdminPackagesController::class' => 'BillingPackagesController::class',
+            'AdminCouponsController::class'  => 'BillingCouponsController::class',
+        ];
+        foreach ($classSwaps as $from => $to) {
+            $content = str_replace($from, $to, $content);
+        }
+
+        // ── 2. Fix use-imports ────────────────────────────────────────────────
+        // Remove stub imports no longer needed (AdminUsers/Packages/Coupons controllers).
+        $stubImportPatterns = [
+            '/^use\s+\S+\\\\AdminUsersController;\n?/m',
+            '/^use\s+\S+\\\\AdminPackagesController;\n?/m',
+            '/^use\s+\S+\\\\AdminCouponsController;\n?/m',
+        ];
+        foreach ($stubImportPatterns as $pattern) {
+            $content = preg_replace($pattern, '', $content) ?? $content;
+        }
+
+        // Inject real billing controller imports if not already present.
+        $requiredImports = [
+            'App\\Http\\Controllers\\Admin\\BillingUsersController',
+            'App\\Http\\Controllers\\Admin\\BillingPackagesController',
+            'App\\Http\\Controllers\\Admin\\BillingCouponsController',
+            'App\\Http\\Controllers\\Admin\\BillingLedgerController',
+            'App\\Http\\Controllers\\Workspace\\WorkspaceBillingController',
+            'Illuminate\\Foundation\\Http\\Middleware\\PreventRequestForgery',
+        ];
+        $importBlock = '';
+        foreach ($requiredImports as $fqcn) {
+            if (! str_contains($content, $fqcn)) {
+                $importBlock .= "use {$fqcn};\n";
+            }
+        }
+        if ($importBlock !== '') {
+            // Insert after the opening <?php line.
+            $content = preg_replace('/^<\?php\s*\n/m', "<?php\n\n{$importBlock}", $content, 1) ?? $content;
+        }
+
+        // ── 3. Inject missing admin route verbs ───────────────────────────────
+        // DELETE /packages/{package}
+        if (str_contains($content, 'BillingPackagesController') && ! str_contains($content, "->name('admin.packages.destroy')")) {
+            $content = str_replace(
+                "Route::get('/packages/{package}/edit', [BillingPackagesController::class, 'edit'])->whereNumber('package')->name('packages.edit');",
+                "Route::get('/packages/{package}/edit', [BillingPackagesController::class, 'edit'])->whereNumber('package')->name('packages.edit');\n    Route::delete('/packages/{package}', [BillingPackagesController::class, 'destroy'])->whereNumber('package')->name('packages.destroy');",
+                $content,
+            );
+        }
+        // DELETE /coupons/{coupon}
+        if (str_contains($content, 'BillingCouponsController') && ! str_contains($content, "->name('admin.coupons.destroy')")) {
+            $content = str_replace(
+                "Route::get('/coupons/{coupon}/edit', [BillingCouponsController::class, 'edit'])->whereNumber('coupon')->name('coupons.edit');",
+                "Route::get('/coupons/{coupon}/edit', [BillingCouponsController::class, 'edit'])->whereNumber('coupon')->name('coupons.edit');\n    Route::delete('/coupons/{coupon}', [BillingCouponsController::class, 'destroy'])->whereNumber('coupon')->name('coupons.destroy');",
+                $content,
+            );
+        }
+        // GET /premium-customers/revenue-month
+        if (str_contains($content, 'BillingLedgerController') && ! str_contains($content, 'revenue-month')) {
+            $content = str_replace(
+                "Route::get('/premium-customers', [BillingLedgerController::class, 'premiumCustomers'])->name('premium-customers.index');",
+                "Route::get('/premium-customers', [BillingLedgerController::class, 'premiumCustomers'])->name('premium-customers.index');\n    Route::get('/premium-customers/revenue-month', [BillingLedgerController::class, 'premiumRevenueMonth'])->name('premium-customers.revenue-month');",
+                $content,
+            );
+        }
+
+        // ── 4. Add workspace billing routes if missing ─────────────────────────
+        if (! str_contains($content, 'billing-history')) {
+            $workspaceBlock = <<<'PHP'
+
+// Workspace billing routes (stripe-lri)
+Route::middleware(['auth', 'verified'])->group(function (): void {
+    Route::get('/billing-history', [WorkspaceBillingController::class, 'billingHistory'])->name('billing-history.index');
+    Route::get('/dashboard/pricing-plans', [WorkspaceBillingController::class, 'pricingPlans'])->name('pricing-plans.index');
+    Route::get('/subscription', [WorkspaceBillingController::class, 'subscription'])->name('subscription.index');
+    Route::post('/checkout', [WorkspaceBillingController::class, 'checkout'])->name('checkout.create');
+});
+
+PHP;
+            $content = str_replace("require __DIR__.'/auth.php';", $workspaceBlock."require __DIR__.'/auth.php';", $content);
+        }
+
+        // ── 5. Add Stripe webhook routes if missing ───────────────────────────
+        if (! str_contains($content, 'stripe.webhook')) {
+            $webhookBlock = <<<'PHP'
+
+// Stripe webhook routes (stripe-lri)
+if (config('stripe-lri.register_webhook', true)) {
+    Route::middleware('web')->group(function (): void {
+        Route::get('/stripe/webhook', [\App\Http\Controllers\Webhooks\StripeWebhookInfoController::class, '__invoke'])
+            ->name('stripe.webhook.info');
+        Route::post('/stripe/webhook', [\App\Http\Controllers\Webhooks\StripeWebhookController::class, 'handle'])
+            ->name('stripe.webhook')
+            ->withoutMiddleware([PreventRequestForgery::class]);
+    });
+}
+
+PHP;
+            $content = str_replace("require __DIR__.'/auth.php';", $webhookBlock."require __DIR__.'/auth.php';", $content);
+        }
+
+        if ($content === $original) {
             return false;
         }
 
-        // Remove consecutive blank lines left by deletions (max one blank line in a row).
-        $clean = [];
-        $prevBlank = false;
-        foreach ($filtered as $line) {
-            $isBlank = trim($line) === '';
-            if ($isBlank && $prevBlank) {
-                continue;
-            }
-            $clean[] = $line;
-            $prevBlank = $isBlank;
-        }
-
-        $this->files->put($webRoutes, implode("\n", $clean));
+        $this->files->put($webRoutes, $content);
+        $output?->writeln(' <fg=gray>patched</> routes/web.php — billing routes now use real controllers', OutputInterface::VERBOSITY_NORMAL);
 
         return true;
     }
