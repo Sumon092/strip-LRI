@@ -47,8 +47,12 @@ final class ApplicationCodePublisher
             $this->files->put(base_path('routes/stripe-lri.php'), $this->standaloneRoutesFileContents());
             $this->files->put(app_path('Providers/StripeLriServiceProvider.php'), $this->hostStripeLriServiceProviderContents());
             $this->ensureHostProviderRegistered($output);
+            $patched = $this->patchWebRoutes($output);
             $lines[] = 'Published Stripe-LRI code under app/Http (Admin, Workspace, Webhooks, Concerns), app/Models/Billing, app/Support/Billing, app/Contracts, app/Services, app/Console.';
             $lines[] = 'Published app/Providers/StripeLriServiceProvider.php and routes/stripe-lri.php (no vendor route classes).';
+            if ($patched) {
+                $lines[] = 'Patched routes/web.php: removed stub billing route registrations that conflict with stripe-lri.php.';
+            }
         } else {
             $lines[] = 'Skipped copying billing PHP (marker present). Use --force to overwrite all published app files.';
         }
@@ -186,6 +190,7 @@ final class ApplicationCodePublisher
             'StripeLri\\Models\\' => 'App\\Models\\Billing\\',
             'StripeLri\\Support\\' => 'App\\Support\\Billing\\',
             'StripeLri\\Contracts\\CreditLedger' => 'App\\Contracts\\CreditLedger',
+            'StripeLri\\Services\\DatabaseCreditLedger' => 'App\\Services\\Billing\\DatabaseCreditLedger',
             'StripeLri\\Services\\NullCreditLedger' => 'App\\Services\\Billing\\NullCreditLedger',
             'StripeLri\\Services\\StripeProductPushService' => 'App\\Services\\Billing\\StripeProductPushService',
             'StripeLri\\Services\\StripeWebhookProcessor' => 'App\\Services\\Billing\\StripeWebhookProcessor',
@@ -220,6 +225,12 @@ final class ApplicationCodePublisher
             'App\\Services\\Billing',
         );
         $this->files->put(app_path('Services/Billing/StripeWebhookProcessor.php'), $processor);
+
+        $ledgerDb = $this->transformPhpSource(
+            $this->files->get($packageRoot.'/src/Services/DatabaseCreditLedger.php'),
+            'App\\Services\\Billing',
+        );
+        $this->files->put(app_path('Services/Billing/DatabaseCreditLedger.php'), $ledgerDb);
     }
 
     private function publishConsoleCommands(): void
@@ -399,7 +410,12 @@ class StripeLriServiceProvider extends ServiceProvider
     {
         $this->app->singletonIf(
             \App\Contracts\CreditLedger::class,
-            fn (): \App\Contracts\CreditLedger => new \App\Services\Billing\NullCreditLedger
+            function (): \App\Contracts\CreditLedger {
+                if (config('stripe-lri.credit_based')) {
+                    return new \App\Services\Billing\DatabaseCreditLedger;
+                }
+                return new \App\Services\Billing\NullCreditLedger;
+            }
         );
     }
 
@@ -482,6 +498,109 @@ PHP;
 
         $this->files->put($path, $contents);
         $output?->writeln(' <fg=gray>registered</> App\\Providers\\StripeLriServiceProvider in bootstrap/providers.php', OutputInterface::VERBOSITY_VERBOSE);
+    }
+
+    /**
+     * Remove stub billing route registrations from routes/web.php that would shadow the real
+     * billing controllers published by stripe-lri. Returns true if the file was changed.
+     *
+     * Detects stub controller imports and Route calls for the URL prefixes owned by stripe-lri:
+     * /admin/users, /admin/packages, /admin/coupons, /admin/transactions, /admin/invoices,
+     * /admin/premium-customers, /billing-history, /subscription, /checkout, /dashboard/pricing-plans.
+     */
+    private function patchWebRoutes(?OutputInterface $output): bool
+    {
+        $webRoutes = base_path('routes/web.php');
+        if (! $this->files->exists($webRoutes)) {
+            return false;
+        }
+
+        $original = $this->files->get($webRoutes);
+        $lines = explode("\n", $original);
+        $filtered = [];
+        $changed = false;
+
+        // Controller class names used by stub/placeholder code that stripe-lri replaces.
+        $stubControllers = [
+            'BillingUsersController',
+            'BillingPackagesController',
+            'BillingCouponsController',
+            'BillingLedgerController',
+            'WorkspaceBillingController',
+        ];
+
+        // URL prefixes registered in stripe-lri.php — drop Route:: lines touching these.
+        $ownedPrefixes = [
+            '/admin/users',
+            '/admin/packages',
+            '/admin/coupons',
+            '/admin/transactions',
+            '/admin/invoices',
+            '/admin/premium-customers',
+            '/billing-history',
+            '/subscription',
+            '/checkout',
+            '/dashboard/pricing-plans',
+            '/stripe/webhook',
+        ];
+
+        foreach ($lines as $line) {
+            $trimmed = ltrim($line);
+
+            // Drop use-import lines for stub controllers.
+            $isStubImport = false;
+            foreach ($stubControllers as $ctrl) {
+                if (preg_match('/^use\s+.*'.preg_quote($ctrl, '/').'/', $trimmed)) {
+                    $isStubImport = true;
+                    break;
+                }
+            }
+            if ($isStubImport) {
+                $changed = true;
+                $output?->writeln(' <fg=gray>patch web.php</> removed import: '.trim($line), OutputInterface::VERBOSITY_VERBOSE);
+                continue;
+            }
+
+            // Drop Route:: lines that register an owned URL (single-line form).
+            $isOwnedRoute = false;
+            if (str_contains($trimmed, 'Route::')) {
+                foreach ($ownedPrefixes as $prefix) {
+                    // Match '/prefix', '/prefix/...' in both quote styles.
+                    if (str_contains($line, "'".$prefix) || str_contains($line, '"'.$prefix)) {
+                        $isOwnedRoute = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($isOwnedRoute) {
+                $changed = true;
+                $output?->writeln(' <fg=gray>patch web.php</> removed route: '.trim($line), OutputInterface::VERBOSITY_VERBOSE);
+                continue;
+            }
+
+            $filtered[] = $line;
+        }
+
+        if (! $changed) {
+            return false;
+        }
+
+        // Remove consecutive blank lines left by deletions (max one blank line in a row).
+        $clean = [];
+        $prevBlank = false;
+        foreach ($filtered as $line) {
+            $isBlank = trim($line) === '';
+            if ($isBlank && $prevBlank) {
+                continue;
+            }
+            $clean[] = $line;
+            $prevBlank = $isBlank;
+        }
+
+        $this->files->put($webRoutes, implode("\n", $clean));
+
+        return true;
     }
 
     private function copyMigrationDirectory(string $sourceDir, string $destDir, bool $force, ?OutputInterface $output): void
