@@ -58,7 +58,10 @@ return [
     |--------------------------------------------------------------------------
     */
     'models' => [
-        'user' => env('STRIPE_LRI_USER_MODEL', 'App\\Models\\User'),
+        'user'                    => env('STRIPE_LRI_USER_MODEL', 'App\\Models\\User'),
+        'subscription_product_user' => env('STRIPE_LRI_SPU_MODEL', 'App\\Models\\Billing\\SubscriptionProductUser'),
+        'payment'                 => env('STRIPE_LRI_PAYMENT_MODEL', 'App\\Models\\Billing\\Payment'),
+        'account_deletion_log'    => env('STRIPE_LRI_DELETION_LOG_MODEL', 'App\\Models\\AccountDeletionLog'),
     ],
 
     'tables' => [

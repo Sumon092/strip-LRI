@@ -37,6 +37,8 @@ final class ApplicationCodePublisher
 
         $fullCodePublish = ! $this->files->exists($marker) || $force;
 
+        $this->ensureConfigModelKeys($packageRoot, $output);
+
         if ($fullCodePublish) {
             $this->removeLegacyAppStripeLriDirectory();
             $this->removeLegacyPublishedBillingControllerTree();
@@ -498,6 +500,53 @@ PHP;
 
         $this->files->put($path, $contents);
         $output?->writeln(' <fg=gray>registered</> App\\Providers\\StripeLriServiceProvider in bootstrap/providers.php', OutputInterface::VERBOSITY_VERBOSE);
+    }
+
+    /**
+     * Ensure the published config/stripe-lri.php has all required model keys.
+     * Laravel's mergeConfigFrom() does not deep-merge nested arrays, so model keys
+     * added to the package config after initial publish are never seen by the app.
+     */
+    private function ensureConfigModelKeys(string $packageRoot, ?OutputInterface $output): void
+    {
+        $configPath = config_path('stripe-lri.php');
+        if (! $this->files->exists($configPath)) {
+            // Config not yet published — copy from package so the app has a full file.
+            $this->files->copy($packageRoot.'/config/stripe-lri.php', $configPath);
+            $output?->writeln(' <fg=gray>published</> config/stripe-lri.php', OutputInterface::VERBOSITY_VERBOSE);
+
+            return;
+        }
+
+        $content = $this->files->get($configPath);
+
+        $required = [
+            'subscription_product_user' => "env('STRIPE_LRI_SPU_MODEL', 'App\\\\Models\\\\Billing\\\\SubscriptionProductUser')",
+            'payment'                   => "env('STRIPE_LRI_PAYMENT_MODEL', 'App\\\\Models\\\\Billing\\\\Payment')",
+            'account_deletion_log'      => "env('STRIPE_LRI_DELETION_LOG_MODEL', 'App\\\\Models\\\\AccountDeletionLog')",
+        ];
+
+        $additions = '';
+        foreach ($required as $key => $default) {
+            if (! str_contains($content, "'$key'") && ! str_contains($content, '"'.$key.'"')) {
+                $additions .= "\n        '$key' => $default,";
+                $output?->writeln(" <fg=gray>patch config</> added models.$key", OutputInterface::VERBOSITY_VERBOSE);
+            }
+        }
+
+        if ($additions === '') {
+            return;
+        }
+
+        // Insert the new keys right after the existing 'user' model line.
+        $content = preg_replace(
+            "/'user'\s*=>\s*env\([^)]+\),/",
+            "$0$additions",
+            $content,
+            1,
+        ) ?? $content;
+
+        $this->files->put($configPath, $content);
     }
 
     /**
