@@ -301,6 +301,13 @@ PHP;
         $this->files->ensureDirectoryExists(app_path('Console/Commands'));
         $this->files->put(app_path('Console/Commands/StripeLriCreditsProcessHistory.php'), $hist);
         $this->files->put(app_path('Console/Commands/StripeLriCreditsAddMonthlyForYearly.php'), $monthly);
+
+        // Publish the seed command (always, not just when credit_based)
+        $seed = $this->transformPhpSource(
+            $this->files->get(dirname(__DIR__, 2).'/src/Console/Commands/StripeLriSeed.php'),
+            'App\\Console\\Commands',
+        );
+        $this->files->put(app_path('Console/Commands/StripeLriSeed.php'), $seed);
     }
 
     private function standaloneRoutesFileContents(): string
@@ -429,11 +436,17 @@ class StripeLriServiceProvider extends ServiceProvider
 
         $this->registerScheduledTasks();
 
-        if ($this->app->runningInConsole() && config('stripe-lri.credit_based')) {
+        if ($this->app->runningInConsole()) {
             $this->commands([
-                \App\Console\Commands\StripeLriCreditsProcessHistory::class,
-                \App\Console\Commands\StripeLriCreditsAddMonthlyForYearly::class,
+                \App\Console\Commands\StripeLriSeed::class,
             ]);
+
+            if (config('stripe-lri.credit_based')) {
+                $this->commands([
+                    \App\Console\Commands\StripeLriCreditsProcessHistory::class,
+                    \App\Console\Commands\StripeLriCreditsAddMonthlyForYearly::class,
+                ]);
+            }
         }
     }
 
