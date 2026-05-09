@@ -187,6 +187,9 @@ final class ApplicationCodePublisher
             'StripeLri\\Support\\' => 'App\\Support\\Billing\\',
             'StripeLri\\Contracts\\CreditLedger' => 'App\\Contracts\\CreditLedger',
             'StripeLri\\Services\\NullCreditLedger' => 'App\\Services\\Billing\\NullCreditLedger',
+            'StripeLri\\Services\\StripeProductPushService' => 'App\\Services\\Billing\\StripeProductPushService',
+            'StripeLri\\Services\\StripeWebhookProcessor' => 'App\\Services\\Billing\\StripeWebhookProcessor',
+            'StripeLri\\Models\\SubscriptionItem' => 'App\\Models\\Billing\\SubscriptionItem',
         ];
     }
 
@@ -205,6 +208,18 @@ final class ApplicationCodePublisher
         );
         $this->files->ensureDirectoryExists(app_path('Services/Billing'));
         $this->files->put(app_path('Services/Billing/NullCreditLedger.php'), $null);
+
+        $push = $this->transformPhpSource(
+            $this->files->get($packageRoot.'/src/Services/StripeProductPushService.php'),
+            'App\\Services\\Billing',
+        );
+        $this->files->put(app_path('Services/Billing/StripeProductPushService.php'), $push);
+
+        $processor = $this->transformPhpSource(
+            $this->files->get($packageRoot.'/src/Services/StripeWebhookProcessor.php'),
+            'App\\Services\\Billing',
+        );
+        $this->files->put(app_path('Services/Billing/StripeWebhookProcessor.php'), $processor);
     }
 
     private function publishConsoleCommands(): void
@@ -292,7 +307,7 @@ use App\Http\Controllers\Admin\BillingUsersController;
 use App\Http\Controllers\Webhooks\StripeWebhookController;
 use App\Http\Controllers\Webhooks\StripeWebhookInfoController;
 use App\Http\Controllers\Workspace\WorkspaceBillingController;
-use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Support\Facades\Route;
 
 if (config('stripe-lri.register_webhook', true)) {
@@ -301,7 +316,7 @@ if (config('stripe-lri.register_webhook', true)) {
             ->name('stripe.webhook.info');
         Route::post('/stripe/webhook', [StripeWebhookController::class, 'handle'])
             ->name('stripe.webhook')
-            ->withoutMiddleware([VerifyCsrfToken::class]);
+            ->withoutMiddleware([PreventRequestForgery::class]);
     });
 }
 
@@ -316,6 +331,8 @@ if (config('stripe-lri.register_routes', false)) {
             ->name('pricing-plans.index');
         Route::get('/subscription', [WorkspaceBillingController::class, 'subscription'])
             ->name('subscription.index');
+        Route::post('/checkout', [WorkspaceBillingController::class, 'checkout'])
+            ->name('checkout.create');
     });
 
     Route::middleware($adminMw)->prefix('admin')->name('admin.')->group(function (): void {

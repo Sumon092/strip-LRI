@@ -10,7 +10,9 @@ use Inertia\Response;
 use StripeLri\Http\Requests\StorePackageRequest;
 use StripeLri\Http\Requests\UpdatePackageRequest;
 use StripeLri\Models\Package;
+use StripeLri\Services\StripeProductPushService;
 use StripeLri\Support\PackagePresenter;
+use StripeLri\Support\StripeWebhookCatalogGate;
 
 class BillingPackagesController extends Controller
 {
@@ -34,14 +36,24 @@ class BillingPackagesController extends Controller
             ),
         );
 
+        $canCreatePackages = StripeWebhookCatalogGate::allowsPackageWrites();
+
         return Inertia::render('Admin/Packages/Index', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
+            'canCreatePackages' => $canCreatePackages,
+            'packagesCreateBlockReason' => $canCreatePackages ? null : StripeWebhookCatalogGate::denyMessage(),
             'products' => $paginator,
         ]);
     }
 
-    public function create(): Response
+    public function create(): Response|RedirectResponse
     {
+        if (! StripeWebhookCatalogGate::allowsPackageWrites()) {
+            return redirect()
+                ->route('admin.packages.index')
+                ->with('error', StripeWebhookCatalogGate::denyMessage());
+        }
+
         return Inertia::render('Admin/Packages/Create', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
             'form' => PackagePresenter::emptyForm(),
@@ -64,9 +76,23 @@ class BillingPackagesController extends Controller
 
     public function store(StorePackageRequest $request): RedirectResponse
     {
+        if (! StripeWebhookCatalogGate::allowsPackageWrites()) {
+            return redirect()
+                ->route('admin.packages.index')
+                ->with('error', StripeWebhookCatalogGate::denyMessage());
+        }
+
         $validated = $request->validated();
         $package = Package::query()->create(PackagePresenter::validatedToAttributes($validated));
         PackagePresenter::syncChildTables($package, $validated);
+
+        if ($package->plan_type === 'stripe_plan' && trim((string) config('stripe-lri.stripe.secret', '')) !== '') {
+            try {
+                (new StripeProductPushService)->pushNewPackage($package);
+            } catch (\Throwable $e) {
+                logger()->error('stripe-lri.push_product_failed', ['error' => $e->getMessage(), 'package_id' => $package->getKey()]);
+            }
+        }
 
         return redirect()
             ->route('admin.packages.index')
@@ -80,6 +106,14 @@ class BillingPackagesController extends Controller
         $model->fill(PackagePresenter::validatedToAttributes($validated));
         $model->save();
         PackagePresenter::syncChildTables($model, $validated);
+
+        if ($model->plan_type === 'stripe_plan' && trim((string) config('stripe-lri.stripe.secret', '')) !== '') {
+            try {
+                (new StripeProductPushService)->pushUpdatedPackage($model);
+            } catch (\Throwable $e) {
+                logger()->error('stripe-lri.push_product_failed', ['error' => $e->getMessage(), 'package_id' => $model->getKey()]);
+            }
+        }
 
         return redirect()
             ->route('admin.packages.index')

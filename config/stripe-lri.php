@@ -17,8 +17,11 @@ return [
     | Register Stripe webhook routes (GET info + POST handler)
     |--------------------------------------------------------------------------
     |
-    | When true (default), the package registers /stripe/webhook without editing
-    | your routes/web.php. Set false only if you define these routes yourself.
+    | Production Stripe billing is webhook-driven (renewals, payments, failed
+    | charges, subscription state). Keep this true, expose POST /stripe/webhook
+    | to Stripe, and set stripe.webhook_secret below. Set false only if your app
+    | registers an equivalent signed POST endpoint elsewhere (never omit
+    | webhooks from a live billing design).
     |
     */
     'register_webhook' => (bool) env('STRIPE_LRI_REGISTER_WEBHOOK', true),
@@ -74,6 +77,10 @@ return [
 
     'stripe' => [
         'secret' => env('STRIPE_SECRET', env('STRIPE_LRI_SECRET', '')),
+        /*
+         * Mandatory for verifying Stripe webhook signatures in production.
+         * Without this, POST /stripe/webhook cannot trust inbound events (handler returns 503).
+         */
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET', env('STRIPE_LRI_WEBHOOK_SECRET', '')),
     ],
 

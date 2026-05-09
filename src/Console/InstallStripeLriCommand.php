@@ -87,7 +87,7 @@ class InstallStripeLriCommand extends Command
         $this->line(' • STRIPE_LRI_CREDIT_BASED='.($creditBased ? 'true' : 'false'));
         $this->line(' • STRIPE_LRI_PUBLISHED_TO_APP='.($skipPublish ? 'false' : 'true'));
         $this->line(' • STRIPE_LRI_REGISTER_ROUTES=true (set false in .env if your app already defines the same URLs)');
-        $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook (no web.php edits)');
+        $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook (mandatory for production billing; set STRIPE_WEBHOOK_SECRET before going live)');
         if (! $skipPublish) {
             $this->line(' • Published controllers: app/Http/Controllers/Admin (Billing*), Workspace, Webhooks, Concerns; models/support: app/Models/Billing, app/Support/Billing; app/Contracts, app/Services/Billing, app/Console/Commands.');
             $this->line(' • App provider: app/Providers/StripeLriServiceProvider.php (registered in bootstrap/providers.php).');

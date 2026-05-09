@@ -2,7 +2,7 @@
 
 namespace StripeLri\Routing;
 
-use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Support\Facades\Route;
 
 /**
@@ -31,7 +31,7 @@ final class StripeLriRouteRegistrar
                 ->name('stripe.webhook.info');
             Route::post('/stripe/webhook', ["{$c}\\Webhooks\\StripeWebhookController", 'handle'])
                 ->name('stripe.webhook')
-                ->withoutMiddleware([VerifyCsrfToken::class]);
+                ->withoutMiddleware([PreventRequestForgery::class]);
         });
     }
 
@@ -47,6 +47,8 @@ final class StripeLriRouteRegistrar
                 ->name('pricing-plans.index');
             Route::get('/subscription', ["{$c}\\Workspace\\WorkspaceBillingController", 'subscription'])
                 ->name('subscription.index');
+            Route::post('/checkout', ["{$c}\\Workspace\\WorkspaceBillingController", 'checkout'])
+                ->name('checkout.create');
         });
 
         Route::middleware($adminMw)->prefix('admin')->name('admin.')->group(function () use ($c): void {

@@ -4,6 +4,8 @@ namespace StripeLri\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
+use StripeLri\Support\StripeWebhookCatalogGate;
 
 class StorePackageRequest extends FormRequest
 {
@@ -49,5 +51,14 @@ class StorePackageRequest extends FormRequest
         if (! $this->has('credit_limit') || $this->input('credit_limit') === null) {
             $this->merge(['credit_limit' => 0]);
         }
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $v): void {
+            if (! StripeWebhookCatalogGate::allowsPackageWrites()) {
+                $v->errors()->add('stripe_webhook', StripeWebhookCatalogGate::denyMessage());
+            }
+        });
     }
 }

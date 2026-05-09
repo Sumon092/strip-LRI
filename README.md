@@ -126,7 +126,14 @@ All keys below are read from **`.env`** via `config/stripe-lri.php` (after you p
 |----------|---------|---------|
 | `STRIPE_LRI_CREDIT_BASED` | `true` / `false` | From the install prompt. When `false`, credit-only **migrations** (columns + `credit_*` tables) are **not** loaded; credit Artisan commands and credit scheduler entries are **not** registered. |
 | `STRIPE_LRI_REGISTER_ROUTES` | `true` | When `true`, the package registers workspace + admin **billing UI** routes. Set `false` if your app already defines those URLs. |
-| `STRIPE_LRI_REGISTER_WEBHOOK` | `true` | When `true`, registers **`GET` + `POST` `/stripe/webhook`** (no edits to `routes/web.php`). Set `false` only if you define these routes yourself. |
+| `STRIPE_LRI_REGISTER_WEBHOOK` | `true` | Keep **`true`**: registers **`GET` + `POST` `/stripe/webhook`**. Real Stripe billing depends on webhooks (payments, renewals, subscription lifecycle). Set `false` only if you register the same signed **`POST`** URL yourself elsewhere. |
+
+### Stripe (production): treat as required
+
+| Variable | Default if unset | Purpose |
+|----------|------------------|---------|
+| `STRIPE_SECRET` **or** `STRIPE_LRI_SECRET` | *(empty)* | Stripe secret API key (required to call Stripe and for server-side checkout). |
+| `STRIPE_WEBHOOK_SECRET` **or** `STRIPE_LRI_WEBHOOK_SECRET` | *(empty)* | **Required** to verify webhook signatures. Without it, `POST /stripe/webhook` cannot accept trusted events (published handler responds **503** until set). |
 
 ### Optional — add when you need them
 
@@ -134,17 +141,15 @@ All keys below are read from **`.env`** via `config/stripe-lri.php` (after you p
 |----------|------------------|---------|
 | `STRIPE_LRI_USER_MODEL` | `App\Models\User` | Eloquent user class for package user admin. |
 | `STRIPE_LRI_USERS_TABLE` | `users` | `users` table name for validation / queries. |
-| `STRIPE_SECRET` **or** `STRIPE_LRI_SECRET` | *(empty)* | Stripe secret API key. |
-| `STRIPE_WEBHOOK_SECRET` **or** `STRIPE_LRI_WEBHOOK_SECRET` | *(empty)* | Stripe webhook signing secret. |
 | `STRIPE_LRI_SCHEDULE_ENABLED` | `false` | When `true` **and** `STRIPE_LRI_CREDIT_BASED=true`, registers packaged credit scheduler tasks (see below). |
 | `STRIPE_LRI_SCHEDULE_PROCESS_HISTORY` | `true` | Only if credit-based + schedule enabled: hourly `stripe-lri:credits:process-history`. |
 | `STRIPE_LRI_SCHEDULE_MONTHLY_CREDITS` | `true` | Only if credit-based + schedule enabled: daily `stripe-lri:credits:add-monthly-for-yearly`. |
 
 Bind `App\Contracts\CreditLedger` in your app before relying on the schedule commands; the default implementation is `App\Services\Billing\NullCreditLedger` (no-op) until you replace it.
 
-## Webhook
+## Webhook (mandatory for live billing)
 
-`POST /stripe/webhook` is registered with CSRF disabled. Point Stripe CLI or the Dashboard to this URL and set `STRIPE_WEBHOOK_SECRET`.
+Stripe is the source of truth for money and subscription state in production. Your app **must** receive signed **`POST`** events at `POST /stripe/webhook` (or an equivalent endpoint you own), with **`STRIPE_WEBHOOK_SECRET`** set to the signing secret for that endpoint. The route is registered with CSRF disabled. Use Stripe CLI (`stripe listen --forward-to …`) locally and the Dashboard **Developers → Webhooks** in deployed environments. Catalog rows from the admin UI (packages) are separate from lifecycle sync, which belongs in webhook handling you implement or extend.
 
 ## Indexchecker-style credits & scheduler
 
@@ -167,4 +172,4 @@ Set `STRIPE_LRI_SCHEDULE_ENABLED=true` and bind `CreditLedger` in your `AppServi
 
 ## Next steps
 
-Subscription products are persisted via `App\Http\Controllers\Admin\BillingPackagesController` and child tables. Coupons, transactions, invoices, premium customers, and workspace billing pages render **empty** paginators and zeroed summaries until you connect Stripe and your own queries or repositories.
+Subscription products are persisted via `App\Http\Controllers\Admin\BillingPackagesController` and child tables. **Creating** a package is disabled until webhooks are usable **and** at least one signed event has been verified: `STRIPE_LRI_REGISTER_WEBHOOK=true`, `STRIPE_WEBHOOK_SECRET` set, migrations applied (`stripe_lri_webhook_health`), and `POST /stripe/webhook` has successfully processed an event (table row `id=1` gets `last_valid_event_at`). Use Stripe CLI (`stripe listen` + `stripe trigger …`) or a Dashboard test delivery. Coupons, transactions, invoices, premium customers, and workspace billing pages render **empty** paginators and zeroed summaries until you connect Stripe and your own queries or repositories.
