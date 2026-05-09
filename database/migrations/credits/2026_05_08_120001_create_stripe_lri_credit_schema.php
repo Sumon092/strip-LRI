@@ -43,6 +43,8 @@ return new class extends Migration
                 $table->foreignId('user_id')->constrained()->cascadeOnDelete();
                 $table->foreignId('subscription_product_id')->nullable()->constrained('subscription_products')->nullOnDelete();
                 $table->foreignId('subscription_id')->nullable()->constrained()->nullOnDelete();
+                $table->string('type', 16)->default('credit')->comment('credit = adding credits, debit = consuming/removing credits');
+                $table->unsignedBigInteger('credit_amount')->default(0)->comment('Absolute (always positive) number of credits');
                 $table->bigInteger('delta');
                 $table->bigInteger('balance_after')->nullable();
                 $table->string('entry_type', 64)->index();
