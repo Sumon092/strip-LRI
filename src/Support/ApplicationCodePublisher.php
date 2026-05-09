@@ -573,7 +573,11 @@ PHP;
      *  2. Swap use-imports accordingly (remove stubs, inject real billing controller imports).
      *  3. Inject missing route verbs (DELETE for packages, DELETE for coupons, revenue-month endpoint).
      *  4. Append workspace billing routes (billing-history, pricing-plans, subscription, checkout) if absent.
-     *  5. Append Stripe webhook routes if absent.
+     *  5. Append admin billing routes (users/packages/coupons/transactions/invoices) if absent.
+     *
+     * Note: Stripe webhook routes are NOT injected here — they are exclusively registered
+     * by routes/stripe-lri.php (loaded by StripeLriServiceProvider), which is always loaded
+     * before web.php could conflict.
      */
     private function patchWebRoutes(?OutputInterface $output): bool
     {
@@ -624,7 +628,6 @@ PHP;
             'App\\Http\\Controllers\\Admin\\BillingCouponsController',
             'App\\Http\\Controllers\\Admin\\BillingLedgerController',
             'App\\Http\\Controllers\\Workspace\\WorkspaceBillingController',
-            'Illuminate\\Foundation\\Http\\Middleware\\PreventRequestForgery',
         ];
         $importBlock = '';
         foreach ($requiredImports as $fqcn) {
@@ -639,7 +642,7 @@ PHP;
 
         // ── 3. Inject missing admin route verbs ───────────────────────────────
         // DELETE /packages/{package}
-        if (str_contains($content, 'BillingPackagesController') && ! str_contains($content, "->name('admin.packages.destroy')")) {
+        if (str_contains($content, 'BillingPackagesController') && ! str_contains($content, "->name('packages.destroy')")) {
             $content = str_replace(
                 "Route::get('/packages/{package}/edit', [BillingPackagesController::class, 'edit'])->whereNumber('package')->name('packages.edit');",
                 "Route::get('/packages/{package}/edit', [BillingPackagesController::class, 'edit'])->whereNumber('package')->name('packages.edit');\n    Route::delete('/packages/{package}', [BillingPackagesController::class, 'destroy'])->whereNumber('package')->name('packages.destroy');",
@@ -647,7 +650,7 @@ PHP;
             );
         }
         // DELETE /coupons/{coupon}
-        if (str_contains($content, 'BillingCouponsController') && ! str_contains($content, "->name('admin.coupons.destroy')")) {
+        if (str_contains($content, 'BillingCouponsController') && ! str_contains($content, "->name('coupons.destroy')")) {
             $content = str_replace(
                 "Route::get('/coupons/{coupon}/edit', [BillingCouponsController::class, 'edit'])->whereNumber('coupon')->name('coupons.edit');",
                 "Route::get('/coupons/{coupon}/edit', [BillingCouponsController::class, 'edit'])->whereNumber('coupon')->name('coupons.edit');\n    Route::delete('/coupons/{coupon}', [BillingCouponsController::class, 'destroy'])->whereNumber('coupon')->name('coupons.destroy');",
@@ -679,23 +682,44 @@ PHP;
             $content = str_replace("require __DIR__.'/auth.php';", $workspaceBlock."require __DIR__.'/auth.php';", $content);
         }
 
-        // ── 5. Add Stripe webhook routes if missing ───────────────────────────
-        if (! str_contains($content, 'stripe.webhook')) {
-            $webhookBlock = <<<'PHP'
+        // ── 5. Add admin billing routes if missing ────────────────────────────
+        // Check for ::class usage (Route calls), NOT just import lines, so the import
+        // injected in section 2 does not falsely satisfy this check on fresh templates.
+        if (! str_contains($content, 'BillingUsersController::class')) {
+            $adminBillingBlock = <<<'PHP'
 
-// Stripe webhook routes (stripe-lri)
-if (config('stripe-lri.register_webhook', true)) {
-    Route::middleware('web')->group(function (): void {
-        Route::get('/stripe/webhook', [\App\Http\Controllers\Webhooks\StripeWebhookInfoController::class, '__invoke'])
-            ->name('stripe.webhook.info');
-        Route::post('/stripe/webhook', [\App\Http\Controllers\Webhooks\StripeWebhookController::class, 'handle'])
-            ->name('stripe.webhook')
-            ->withoutMiddleware([PreventRequestForgery::class]);
-    });
-}
+// Admin billing routes (stripe-lri)
+Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.')->group(function (): void {
+    Route::get('/users', [BillingUsersController::class, 'index'])->name('users.index');
+    Route::get('/users/{user}', [BillingUsersController::class, 'show'])->whereNumber('user')->name('users.show');
+    Route::get('/users/{user}/edit', [BillingUsersController::class, 'edit'])->whereNumber('user')->name('users.edit');
+    Route::patch('/users/{user}', [BillingUsersController::class, 'update'])->whereNumber('user')->name('users.update');
+    Route::post('/users/{user}/credits', [BillingUsersController::class, 'adjustCredits'])->whereNumber('user')->name('users.credits.adjust');
+    Route::post('/users/{user}/impersonate', [BillingUsersController::class, 'impersonate'])->whereNumber('user')->name('users.impersonate');
+    Route::delete('/users/{user}', [BillingUsersController::class, 'destroy'])->whereNumber('user')->name('users.destroy');
+
+    Route::get('/packages', [BillingPackagesController::class, 'index'])->name('packages.index');
+    Route::get('/packages/create', [BillingPackagesController::class, 'create'])->name('packages.create');
+    Route::post('/packages', [BillingPackagesController::class, 'store'])->name('packages.store');
+    Route::get('/packages/{package}/edit', [BillingPackagesController::class, 'edit'])->whereNumber('package')->name('packages.edit');
+    Route::put('/packages/{package}', [BillingPackagesController::class, 'update'])->whereNumber('package')->name('packages.update');
+    Route::delete('/packages/{package}', [BillingPackagesController::class, 'destroy'])->whereNumber('package')->name('packages.destroy');
+
+    Route::get('/coupons', [BillingCouponsController::class, 'index'])->name('coupons.index');
+    Route::get('/coupons/create', [BillingCouponsController::class, 'create'])->name('coupons.create');
+    Route::post('/coupons', [BillingCouponsController::class, 'store'])->name('coupons.store');
+    Route::get('/coupons/{coupon}/edit', [BillingCouponsController::class, 'edit'])->whereNumber('coupon')->name('coupons.edit');
+    Route::put('/coupons/{coupon}', [BillingCouponsController::class, 'update'])->whereNumber('coupon')->name('coupons.update');
+    Route::delete('/coupons/{coupon}', [BillingCouponsController::class, 'destroy'])->whereNumber('coupon')->name('coupons.destroy');
+
+    Route::get('/transactions', [BillingLedgerController::class, 'transactions'])->name('transactions.index');
+    Route::get('/invoices', [BillingLedgerController::class, 'invoices'])->name('invoices.index');
+    Route::get('/premium-customers', [BillingLedgerController::class, 'premiumCustomers'])->name('premium-customers.index');
+    Route::get('/premium-customers/revenue-month', [BillingLedgerController::class, 'premiumRevenueMonth'])->name('premium-customers.revenue-month');
+});
 
 PHP;
-            $content = str_replace("require __DIR__.'/auth.php';", $webhookBlock."require __DIR__.'/auth.php';", $content);
+            $content = str_replace("require __DIR__.'/auth.php';", $adminBillingBlock."require __DIR__.'/auth.php';", $content);
         }
 
         if ($content === $original) {
