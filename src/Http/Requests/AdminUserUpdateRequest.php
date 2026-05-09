@@ -36,9 +36,6 @@ class AdminUserUpdateRequest extends FormRequest
             'handle' => ['sometimes', 'nullable', 'string', 'max:255', Rule::unique($table, 'username')->ignore((int) $subject->getKey())],
             'role' => ['sometimes', Rule::in(['admin', 'user'])],
             'is_active' => ['sometimes', 'boolean'],
-            'plan_credits' => ['sometimes', 'integer', 'min:0', 'max:2147483647'],
-            'credits' => ['sometimes', 'integer', 'min:0', 'max:2147483647'],
-            'credits_used' => ['sometimes', 'integer', 'min:0', 'max:2147483647'],
             'password' => ['sometimes', 'nullable', 'string', 'min:8', 'confirmed'],
         ];
     }

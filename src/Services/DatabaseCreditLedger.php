@@ -48,6 +48,8 @@ class DatabaseCreditLedger implements CreditLedger
             DB::table('credit_ledger')->insert([
                 'user_id'                 => $spu->user_id,
                 'subscription_product_id' => $spu->subscription_product_id,
+                'type'                    => 'credit',
+                'credit_amount'           => $creditsLimit,
                 'delta'                   => $creditsLimit,
                 'balance_after'           => $newBalance,
                 'entry_type'              => 'monthly_refill',
@@ -105,6 +107,8 @@ class DatabaseCreditLedger implements CreditLedger
         DB::table('credit_ledger')->insert([
             'user_id'                 => $userId,
             'subscription_product_id' => $productId,
+            'type'                    => $delta >= 0 ? 'credit' : 'debit',
+            'credit_amount'           => abs($delta),
             'delta'                   => $delta,
             'balance_after'           => $newBalance,
             'entry_type'              => $entryType,

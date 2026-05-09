@@ -7,10 +7,12 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 use StripeLri\Http\Requests\AdminUserCreditsAdjustRequest;
 use StripeLri\Http\Requests\AdminUserUpdateRequest;
+use StripeLri\Services\DatabaseCreditLedger;
 use StripeLri\Support\UserPresenter;
 
 class BillingUsersController extends Controller
@@ -52,9 +54,34 @@ class BillingUsersController extends Controller
         $ids = $paginator->getCollection()->pluck($userClass::make()->getKeyName())->all();
         $sessions = UserPresenter::latestSessionsForUserIds($ids);
 
-        $rows = $paginator->getCollection()->map(
-            fn (Model $u): array => UserPresenter::row($u, $sessions),
-        )->values()->all();
+        $creditMap = $ids !== []
+            ? DB::table('subscription_product_user as spu')
+                ->join('subscription_products as sp', 'sp.id', '=', 'spu.subscription_product_id')
+                ->whereIn('spu.user_id', $ids)
+                ->where('spu.is_active', true)
+                ->groupBy('spu.user_id')
+                ->select([
+                    'spu.user_id',
+                    DB::raw('SUM(spu.credits_balance) as total_balance'),
+                    DB::raw('SUM(sp.credits_limit) as total_plan'),
+                ])
+                ->get()
+                ->keyBy('user_id')
+            : collect();
+
+        $rows = $paginator->getCollection()->map(function (Model $u) use ($sessions, $creditMap): array {
+            $row  = UserPresenter::row($u, $sessions);
+            $cred = $creditMap->get((int) $u->getKey());
+            if ($cred !== null) {
+                $plan    = (int) $cred->total_plan;
+                $balance = (int) $cred->total_balance;
+                $row['plan_credits']      = $plan;
+                $row['remaining_credits'] = $balance;
+                $row['credits_used']      = max(0, $plan - $balance);
+                $row['type']              = 'Premium';
+            }
+            return $row;
+        })->values()->all();
         $paginator->setCollection(collect($rows));
 
         $stats = [
@@ -91,32 +118,96 @@ class BillingUsersController extends Controller
 
     public function show(int $user): Response
     {
-        $model = $this->resolveUser($user);
+        $model    = $this->resolveUser($user);
         $sessions = UserPresenter::latestSessionsForUserIds([(int) $model->getKey()]);
 
-        return Inertia::render('Admin/Users/Show', [
-            'creditBased' => (bool) config('stripe-lri.credit_based'),
-            'user' => UserPresenter::row($model, $sessions),
-            'subscriptionCount' => 0,
-            'creditPackages' => [],
-            'recentPurchases' => [],
-            'creditTransactions' => [],
-        ]);
+        return Inertia::render('Admin/Users/Show', array_merge(
+            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'user' => UserPresenter::row($model, $sessions)],
+            $this->billingPayload((int) $model->getKey()),
+        ));
     }
 
     public function edit(int $user): Response
     {
-        $model = $this->resolveUser($user);
+        $model    = $this->resolveUser($user);
         $sessions = UserPresenter::latestSessionsForUserIds([(int) $model->getKey()]);
 
-        return Inertia::render('Admin/Users/Edit', [
-            'creditBased' => (bool) config('stripe-lri.credit_based'),
-            'user' => UserPresenter::row($model, $sessions),
-            'subscriptionCount' => 0,
-            'creditPackages' => [],
-            'recentPurchases' => [],
-            'creditTransactions' => [],
-        ]);
+        return Inertia::render('Admin/Users/Edit', array_merge(
+            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'user' => UserPresenter::row($model, $sessions)],
+            $this->billingPayload((int) $model->getKey()),
+        ));
+    }
+
+    /** @return array<string, mixed> */
+    private function billingPayload(int $userId): array
+    {
+        $creditBased = (bool) config('stripe-lri.credit_based');
+
+        /** @var class-string<Model> $spuClass */
+        $spuClass = config('stripe-lri.models.subscription_product_user');
+
+        /** @var class-string<Model> $paymentClass */
+        $paymentClass = config('stripe-lri.models.payment');
+
+        $subscriptionCount = $spuClass::where('user_id', $userId)->where('is_active', true)->count();
+
+        $creditPackages = [];
+        $creditSummary  = null;
+        if ($creditBased) {
+            $spus = $spuClass::with('product.prices')
+                ->where('user_id', $userId)
+                ->where('is_active', true)
+                ->get();
+
+            $creditPackages = $spus->map(fn (Model $spu): array => [
+                'id'          => (int) $spu->getKey(),
+                'planName'    => (string) ($spu->product?->plan_name ?? '—'),
+                'planCredits' => (int) ($spu->product?->getAttribute('credits_limit') ?? 0),
+                'credits'     => (int) ($spu->getAttribute('credits_balance') ?? 0),
+                'expiresAt'   => $spu->expires_at?->format('M d, Y') ?? 'Ongoing',
+                'planType'    => (string) ($spu->product?->prices->first()?->plan_type ?? 'monthly'),
+            ])->all();
+
+            $totalPlan     = array_sum(array_column($creditPackages, 'planCredits'));
+            $totalBalance  = array_sum(array_column($creditPackages, 'credits'));
+            $creditSummary = [
+                'plan_credits'      => $totalPlan,
+                'remaining_credits' => $totalBalance,
+                'credits_used'      => max(0, $totalPlan - $totalBalance),
+            ];
+        }
+
+        $recentPurchases = $paymentClass::with('product')
+            ->where('user_id', $userId)
+            ->orderByDesc('created_at')
+            ->take(5)
+            ->get()
+            ->map(fn (Model $p): array => [
+                'id'       => (int) $p->getKey(),
+                'planName' => (string) ($p->product?->plan_name ?? '—'),
+                'amount'   => '$'.number_format((float) $p->getAttribute('amount'), 2),
+                'status'   => ucfirst((string) $p->getAttribute('status')),
+                'paidAt'   => \Carbon\Carbon::parse($p->getAttribute('paid_at') ?? $p->getAttribute('created_at'))->format('M d, Y'),
+            ])->all();
+
+        $creditTransactions = [];
+        if ($creditBased) {
+            $creditTransactions = DB::table('credit_ledger')
+                ->where('user_id', $userId)
+                ->orderByDesc('created_at')
+                ->take(20)
+                ->get()
+                ->map(fn (object $r): array => [
+                    'id'           => (int) $r->id,
+                    'type'         => (string) ($r->type ?? ($r->delta >= 0 ? 'credit' : 'debit')),
+                    'creditAmount' => (int) ($r->credit_amount ?? abs($r->delta)),
+                    'entryType'    => (string) $r->entry_type,
+                    'description'  => (string) ($r->description ?? ''),
+                    'createdAt'    => \Carbon\Carbon::parse($r->created_at)->format('M d, Y H:i'),
+                ])->all();
+        }
+
+        return compact('subscriptionCount', 'creditPackages', 'creditSummary', 'recentPurchases', 'creditTransactions');
     }
 
     public function update(AdminUserUpdateRequest $request, int $user): RedirectResponse
@@ -128,11 +219,6 @@ class BillingUsersController extends Controller
             $handle = trim((string) $data['handle']);
             $data['username'] = $handle === '' ? null : $handle;
             unset($data['handle']);
-        }
-
-        if (array_key_exists('credits', $data)) {
-            $data['remaining_credits'] = (int) $data['credits'];
-            unset($data['credits']);
         }
 
         if (array_key_exists('password', $data)) {
@@ -157,15 +243,27 @@ class BillingUsersController extends Controller
         $amount = (int) $validated['amount'];
         $action = (string) $validated['action'];
 
-        $remaining = (int) $model->getAttribute('remaining_credits');
-        if ($action === 'add') {
-            $remaining += $amount;
-        } else {
-            $remaining = max(0, $remaining - $amount);
+        $delta = $action === 'add' ? $amount : -$amount;
+
+        /** @var class-string<Model> $spuClass */
+        $spuClass = config('stripe-lri.models.subscription_product_user');
+        $spu = $spuClass::where('user_id', (int) $model->getKey())->where('is_active', true)->first();
+
+        if ($spu !== null) {
+            $newBalance = max(0, (int) $spu->getAttribute('credits_balance') + $delta);
+            $spu->setAttribute('credits_balance', $newBalance);
+            $spu->save();
         }
 
-        $model->setAttribute('remaining_credits', $remaining);
-        $model->save();
+        if (config('stripe-lri.credit_based')) {
+            DatabaseCreditLedger::recordEntry(
+                userId: (int) $model->getKey(),
+                productId: $spu ? (int) $spu->getAttribute('subscription_product_id') : null,
+                delta: $delta,
+                entryType: $action === 'add' ? 'manual_add' : 'manual_remove',
+                description: 'Manual credit adjustment by admin',
+            );
+        }
 
         return redirect()
             ->route('admin.users.show', $model->getKey())
@@ -220,6 +318,21 @@ class BillingUsersController extends Controller
             return redirect()
                 ->route('admin.users.index')
                 ->with('error', 'You cannot delete your own account.');
+        }
+
+        $admin = $request->user();
+
+        // Log deletion if the host app provides the AccountDeletionLog model
+        $logClass = config('stripe-lri.models.account_deletion_log');
+        if ($logClass !== null && class_exists($logClass)) {
+            $logClass::create([
+                'subject_user_id' => (int) $model->getKey(),
+                'name'            => (string) $model->getAttribute('name'),
+                'email'           => (string) $model->getAttribute('email'),
+                'removal_type'    => 'permanent',
+                'admin_id'        => $admin ? (int) $admin->getKey() : null,
+                'admin_name'      => $admin ? (string) $admin->getAttribute('name') : null,
+            ]);
         }
 
         $model->delete();

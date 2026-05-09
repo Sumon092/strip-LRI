@@ -14,6 +14,7 @@ use StripeLri\Models\Subscription;
 use StripeLri\Models\SubscriptionItem;
 use StripeLri\Models\SubscriptionProductPrice;
 use StripeLri\Models\SubscriptionProductUser;
+use StripeLri\Services\DatabaseCreditLedger;
 
 /**
  * Processes Stripe webhook events into local billing records.
@@ -121,6 +122,19 @@ class StripeWebhookProcessor
                     'expires_at'             => $expiresAt,
                 ],
             );
+
+            if (config('stripe-lri.credit_based')) {
+                $creditsLimit = (int) ($product->getAttribute('credits_limit') ?? 0);
+                if ($creditsLimit > 0) {
+                    DatabaseCreditLedger::recordEntry(
+                        userId: (int) $user->getKey(),
+                        productId: (int) $product->getKey(),
+                        delta: $creditsLimit,
+                        entryType: 'purchase',
+                        description: 'Initial credits for '.$product->plan_name.' subscription',
+                    );
+                }
+            }
         }
     }
 
