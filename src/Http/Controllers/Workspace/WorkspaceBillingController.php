@@ -92,6 +92,8 @@ class WorkspaceBillingController extends Controller
 
         if ($discounts !== []) {
             $params['discounts'] = $discounts;
+        } else {
+            $params['allow_promotion_codes'] = true;
         }
 
         try {
