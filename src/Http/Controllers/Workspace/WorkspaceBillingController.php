@@ -82,13 +82,13 @@ class WorkspaceBillingController extends Controller
         $mode = $planType === 'lifetime' ? 'payment' : 'subscription';
 
         $params = [
-            'payment_method_types' => ['card'],
-            'line_items'           => [['price' => $priceId, 'quantity' => 1]],
-            'mode'                 => $mode,
-            'success_url'          => route('subscription.index', ['checkout' => 'success']),
-            'cancel_url'           => route('pricing-plans.index'),
-            'customer_email'       => $request->user()?->email,
-            'metadata'             => ['stripe_price_id' => $priceId],
+            'automatic_payment_methods' => ['enabled' => true],
+            'line_items'                => [['price' => $priceId, 'quantity' => 1]],
+            'mode'                      => $mode,
+            'success_url'               => route('subscription.index', ['checkout' => 'success']),
+            'cancel_url'                => route('pricing-plans.index'),
+            'customer_email'            => $request->user()?->email,
+            'metadata'                  => ['stripe_price_id' => $priceId],
         ];
 
         if ($discounts !== []) {
