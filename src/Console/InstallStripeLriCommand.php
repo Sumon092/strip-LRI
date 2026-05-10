@@ -55,6 +55,13 @@ class InstallStripeLriCommand extends Command
             foreach ($publisher->publishAll((bool) $this->option('force'), $creditBased, $this->output) as $line) {
                 $this->line(' • '.$line);
             }
+
+            // Prevent the package service provider from being auto-discovered so that
+            // vendor/stripe-lri/laravel can be deleted after publish without causing a
+            // "class not found" fatal. The published App\Providers\StripeLriServiceProvider
+            // (registered in bootstrap/providers.php) handles everything independently.
+            $this->addDontDiscover();
+            $this->call('package:discover', ['--quiet' => true]);
         } else {
             $this->components->warn('Skipped publishing app sources (--skip-app-publish). Routes and migrations load from the package.');
         }
@@ -100,6 +107,28 @@ class InstallStripeLriCommand extends Command
         $this->line('Run `php artisan config:clear` if config is cached.');
 
         return self::SUCCESS;
+    }
+
+    private function addDontDiscover(): void
+    {
+        $path = base_path('composer.json');
+        if (! File::exists($path)) {
+            return;
+        }
+
+        $json = json_decode(File::get($path), true);
+        if (! is_array($json)) {
+            return;
+        }
+
+        $dontDiscover = $json['extra']['laravel']['dont-discover'] ?? [];
+        if (in_array('stripe-lri/laravel', $dontDiscover, true)) {
+            return;
+        }
+
+        $dontDiscover[] = 'stripe-lri/laravel';
+        $json['extra']['laravel']['dont-discover'] = $dontDiscover;
+        File::put($path, json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n");
     }
 
     private function writeEnvBool(string $key, bool $value): void
