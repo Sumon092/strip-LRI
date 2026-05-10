@@ -441,6 +441,14 @@ class StripeLriServiceProvider extends ServiceProvider
                 \App\Console\Commands\StripeLriSeed::class,
             ]);
 
+            // Re-register the install command from vendor when the package is still present.
+            // This keeps `php artisan stripe-lri:install --force` working even after the
+            // first install added stripe-lri/laravel to dont-discover (which suppresses the
+            // vendor service provider and would otherwise lose the command).
+            if (class_exists(\StripeLri\Console\InstallStripeLriCommand::class)) {
+                $this->commands([\StripeLri\Console\InstallStripeLriCommand::class]);
+            }
+
             if (config('stripe-lri.credit_based')) {
                 $this->commands([
                     \App\Console\Commands\StripeLriCreditsProcessHistory::class,
