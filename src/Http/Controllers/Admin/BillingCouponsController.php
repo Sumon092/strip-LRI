@@ -91,6 +91,16 @@ class BillingCouponsController extends Controller
             'valid_from'  => $validated['valid_from'] ?? null,
         ]);
 
+        // Migrate legacy coupons: if stripe_coupon_id is a plain Stripe Coupon ID
+        // (not a promo_ ID), create the missing Promotion Code so the code works
+        // on Stripe's hosted checkout page with allow_promotion_codes enabled.
+        if (! empty($model->stripe_coupon_id) && ! str_starts_with((string) $model->stripe_coupon_id, 'promo_')) {
+            $promoId = $this->createPromoCode((string) $model->stripe_coupon_id, strtoupper((string) $model->code));
+            if ($promoId !== null) {
+                $model->stripe_coupon_id = $promoId;
+            }
+        }
+
         $model->save();
 
         // Update Stripe (only name is editable on existing Stripe coupons)
@@ -191,9 +201,34 @@ class BillingCouponsController extends Controller
 
             $stripeCoupon = $client->coupons->create($payload);
 
-            return $stripeCoupon->id;
+            // Create a Stripe Promotion Code linked to the coupon so users can
+            // enter the code on Stripe's hosted checkout (allow_promotion_codes).
+            $promoId = $this->createPromoCode($stripeCoupon->id, strtoupper((string) $attrs['code']));
+
+            return $promoId ?? $stripeCoupon->id;
         } catch (\Throwable $e) {
             logger()->error('stripe-lri.coupon_create_failed', ['error' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    private function createPromoCode(string $stripeCouponId, string $code): ?string
+    {
+        $secret = trim((string) config('stripe-lri.stripe.secret', ''));
+        if ($secret === '') {
+            return null;
+        }
+
+        try {
+            $promo = (new StripeClient($secret))->promotionCodes->create([
+                'coupon' => $stripeCouponId,
+                'code'   => $code,
+            ]);
+
+            return $promo->id;
+        } catch (\Throwable $e) {
+            logger()->error('stripe-lri.promo_code_create_failed', ['error' => $e->getMessage()]);
 
             return null;
         }
@@ -207,10 +242,14 @@ class BillingCouponsController extends Controller
         }
 
         try {
-            (new StripeClient($secret))->coupons->update(
-                $coupon->stripe_coupon_id,
-                ['name' => $coupon->name],
-            );
+            $client   = new StripeClient($secret);
+            $stripeId = (string) $coupon->stripe_coupon_id;
+
+            $couponId = str_starts_with($stripeId, 'promo_')
+                ? $client->promotionCodes->retrieve($stripeId)->coupon->id
+                : $stripeId;
+
+            $client->coupons->update($couponId, ['name' => $coupon->name]);
         } catch (\Throwable $e) {
             logger()->error('stripe-lri.coupon_update_failed', ['error' => $e->getMessage()]);
         }
@@ -224,7 +263,14 @@ class BillingCouponsController extends Controller
         }
 
         try {
-            (new StripeClient($secret))->coupons->delete($coupon->stripe_coupon_id);
+            $client   = new StripeClient($secret);
+            $stripeId = (string) $coupon->stripe_coupon_id;
+
+            $couponId = str_starts_with($stripeId, 'promo_')
+                ? $client->promotionCodes->retrieve($stripeId)->coupon->id
+                : $stripeId;
+
+            $client->coupons->delete($couponId);
         } catch (\Throwable $e) {
             logger()->error('stripe-lri.coupon_delete_failed', ['error' => $e->getMessage()]);
         }
