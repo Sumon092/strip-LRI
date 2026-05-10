@@ -41,6 +41,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Site-limit product model
+    |--------------------------------------------------------------------------
+    |
+    | Set via `php artisan stripe-lri:install` or STRIPE_LRI_SITE_LIMIT.
+    | When true: site-limit migrations (site_limit on subscription_products,
+    | site_count on subscription_product_user) are registered. Set before
+    | first migrate; changing later requires `php artisan migrate` again.
+    |
+    */
+    'site_limit' => (bool) env('STRIPE_LRI_SITE_LIMIT', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application code published into the host app
     |--------------------------------------------------------------------------
     |

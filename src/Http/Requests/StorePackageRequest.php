@@ -25,10 +25,15 @@ class StorePackageRequest extends FormRequest
             ? ['required', 'integer', 'min:0']
             : ['nullable', 'integer', 'min:0'];
 
+        $siteLimitRules = (bool) config('stripe-lri.site_limit')
+            ? ['required', 'integer', 'min:0']
+            : ['nullable', 'integer', 'min:0'];
+
         return [
             'name' => ['required', 'string', 'max:255'],
             'package_type' => ['required', 'string', Rule::in(['stripe_plan', 'free', 'appsumo', 'custom'])],
             'credit_limit' => $creditRules,
+            'site_limit' => $siteLimitRules,
             'status' => ['required', 'string', Rule::in(['active', 'inactive', 'draft'])],
             'description' => ['nullable', 'string'],
             'stripe_product_id' => ['nullable', 'string', 'max:255'],
@@ -50,6 +55,9 @@ class StorePackageRequest extends FormRequest
     {
         if (! $this->has('credit_limit') || $this->input('credit_limit') === null) {
             $this->merge(['credit_limit' => 0]);
+        }
+        if (! $this->has('site_limit') || $this->input('site_limit') === null) {
+            $this->merge(['site_limit' => 0]);
         }
     }
 

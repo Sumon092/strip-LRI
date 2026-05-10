@@ -16,6 +16,8 @@ class InstallStripeLriCommand extends Command
                             {--no-migrate : Skip running database migrations}
                             {--credit-based : Mark app as credit-based (non-interactive)}
                             {--no-credit-based : Mark app as not credit-based (non-interactive)}
+                            {--site-limit : Mark app as site-limit based (non-interactive)}
+                            {--no-site-limit : Mark app as not site-limit based (non-interactive)}
                             {--skip-app-publish : Keep controllers/migrations in vendor only (no app/StripeLri copy)}';
 
     protected $description = 'Publish config, copy workable PHP + migrations into the host app, set .env, and run migrations unless skipped.';
@@ -41,7 +43,22 @@ class InstallStripeLriCommand extends Command
             $creditBased = $this->confirm('Is this application credit-based? (Credits packages, usage meters, etc.)', true);
         }
 
+        if ($this->option('site-limit') && $this->option('no-site-limit')) {
+            $this->components->error('Use only one of --site-limit or --no-site-limit.');
+
+            return self::FAILURE;
+        }
+
+        if ($this->option('site-limit')) {
+            $siteLimited = true;
+        } elseif ($this->option('no-site-limit')) {
+            $siteLimited = false;
+        } else {
+            $siteLimited = $this->confirm('Is this application site-limit based? (Sites/domains per subscription, etc.)', false);
+        }
+
         $this->writeEnvBool('STRIPE_LRI_CREDIT_BASED', $creditBased);
+        $this->writeEnvBool('STRIPE_LRI_SITE_LIMIT', $siteLimited);
         $this->writeEnvBool('STRIPE_LRI_REGISTER_ROUTES', true);
         $this->writeEnvBool('STRIPE_LRI_REGISTER_WEBHOOK', true);
 
@@ -52,7 +69,7 @@ class InstallStripeLriCommand extends Command
             $this->newLine();
             $this->components->info('Publishing Stripe-LRI into your application (app/Http, app/Models, migrations, routes/stripe-lri.php, app/Providers/StripeLriServiceProvider.php)...');
             $publisher = new ApplicationCodePublisher;
-            foreach ($publisher->publishAll((bool) $this->option('force'), $creditBased, $this->output) as $line) {
+            foreach ($publisher->publishAll((bool) $this->option('force'), $creditBased, $siteLimited, $this->output) as $line) {
                 $this->line(' • '.$line);
             }
 
@@ -92,6 +109,7 @@ class InstallStripeLriCommand extends Command
         $this->newLine();
         $this->components->info('Stripe-LRI configured.');
         $this->line(' • STRIPE_LRI_CREDIT_BASED='.($creditBased ? 'true' : 'false'));
+        $this->line(' • STRIPE_LRI_SITE_LIMIT='.($siteLimited ? 'true' : 'false'));
         $this->line(' • STRIPE_LRI_PUBLISHED_TO_APP='.($skipPublish ? 'false' : 'true'));
         $this->line(' • STRIPE_LRI_REGISTER_ROUTES=true (set false in .env if your app already defines the same URLs)');
         $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook (mandatory for production billing; set STRIPE_WEBHOOK_SECRET before going live)');
@@ -101,6 +119,9 @@ class InstallStripeLriCommand extends Command
             $this->line(' • After you verify the app, you may run: composer remove stripe-lri/laravel — the package becomes optional; keep it only if you want stripe-lri:install updates.');
             if (! $creditBased) {
                 $this->line(' • Later, to add credit migrations: php artisan stripe-lri:install --credit-based --force');
+            }
+            if (! $siteLimited) {
+                $this->line(' • Later, to add site-limit migrations: php artisan stripe-lri:install --site-limit --force');
             }
         }
         $this->newLine();

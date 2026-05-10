@@ -117,6 +117,7 @@ class WorkspaceBillingController extends Controller
 
         return Inertia::render('Workspace/BillingHistory', [
             'creditBased'    => $creditBased,
+            'siteLimited'    => (bool) config('stripe-lri.site_limit'),
             'billingHistory' => [
                 'summary' => [
                     'paymentsCount' => $paymentsCount,
@@ -135,6 +136,7 @@ class WorkspaceBillingController extends Controller
         $user        = $request->user();
         $userId      = $user?->getKey();
         $creditBased = (bool) config('stripe-lri.credit_based');
+        $siteLimited = (bool) config('stripe-lri.site_limit');
 
         // Load active packages with their prices
         $packages = Package::query()
@@ -164,6 +166,7 @@ class WorkspaceBillingController extends Controller
                     'product_name'       => (string) $pkg->plan_name,
                     'product_description' => $pkg->description,
                     'credit_limit'       => $creditBased ? (int) ($pkg->credits_limit ?? $pkg->getAttribute('credits_limit') ?? 0) : null,
+                    'site_limit'         => $siteLimited ? (int) ($pkg->site_limit ?? $pkg->getAttribute('site_limit') ?? 0) : null,
                     'stripe_price_id'    => (string) $price->stripe_price_id,
                     'plan_type'          => $planType,
                     'nickname'           => $price->nickname ?: null,
@@ -220,6 +223,7 @@ class WorkspaceBillingController extends Controller
 
         return Inertia::render('Workspace/PricingPlans', [
             'creditBased'          => $creditBased,
+            'siteLimited'          => $siteLimited,
             'plans'                => $plans,
             'currentSubscriptions' => $currentSubscriptions,
             'yearlyDiscountPercent' => $yearlyDiscountPercent,
@@ -231,7 +235,9 @@ class WorkspaceBillingController extends Controller
         $user        = $request->user();
         $userId      = $user?->getKey();
         $creditBased = (bool) config('stripe-lri.credit_based');
+        $siteLimited = (bool) config('stripe-lri.site_limit');
         $hasCreditsBalance = $creditBased && Schema::hasColumn('subscription_product_user', 'credits_balance');
+        $hasSiteCount = $siteLimited && Schema::hasColumn('subscription_product_user', 'site_count');
 
         $perPage = 8;
 
@@ -240,7 +246,7 @@ class WorkspaceBillingController extends Controller
             ->where('user_id', $userId)
             ->where('is_active', true)
             ->get()
-            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased))
+            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited))
             ->values()
             ->all();
 
@@ -253,7 +259,7 @@ class WorkspaceBillingController extends Controller
 
         $history->setCollection(
             $history->getCollection()->map(
-                fn (SubscriptionProductUser $row): array => $this->toHistoryRow($row, $hasCreditsBalance, $creditBased),
+                fn (SubscriptionProductUser $row): array => $this->toHistoryRow($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited),
             ),
         );
 
@@ -264,6 +270,7 @@ class WorkspaceBillingController extends Controller
 
         return Inertia::render('Workspace/Subscription', [
             'creditBased'        => $creditBased,
+            'siteLimited'        => $siteLimited,
             'subscriptionCenter' => [
                 'active'       => $active,
                 'cancelNotice' => [
@@ -278,7 +285,7 @@ class WorkspaceBillingController extends Controller
     // ── Row builders ──────────────────────────────────────────────────────────
 
     /** @return array<string, mixed> */
-    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased): array
+    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited): array
     {
         $product  = $row->product;
         $price    = $product?->prices->first();
@@ -290,6 +297,8 @@ class WorkspaceBillingController extends Controller
             'price'          => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
             'paidAmount'     => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
             'credits'        => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
+            'siteCount'      => ($siteLimited && $hasSiteCount) ? (int) ($row->site_count ?? 0) : null,
+            'siteLimit'      => ($siteLimited && $hasSiteCount) ? (int) ($product?->getAttribute('site_limit') ?? 0) : null,
             'period'         => self::accessPeriodLabel($row),
             'status'         => 'Active',
             'statusVariant'  => 'success',
@@ -300,7 +309,7 @@ class WorkspaceBillingController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function toHistoryRow(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased): array
+    private function toHistoryRow(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited): array
     {
         $product  = $row->product;
         $price    = $product?->prices->first();
@@ -314,6 +323,8 @@ class WorkspaceBillingController extends Controller
             'price'        => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
             'paidAmount'   => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
             'credits'      => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
+            'siteCount'    => ($siteLimited && $hasSiteCount) ? (int) ($row->site_count ?? 0) : null,
+            'siteLimit'    => ($siteLimited && $hasSiteCount) ? (int) ($product?->getAttribute('site_limit') ?? 0) : null,
             'status'       => $row->is_active ? 'Active' : 'Expired',
             'statusVariant' => $row->is_active ? 'success' : 'neutral',
             'accessUntil'  => self::fmt($row->expires_at, 'Ongoing'),

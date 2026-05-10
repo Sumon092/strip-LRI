@@ -28,6 +28,7 @@ final class ApplicationCodePublisher
     public function publishAll(
         bool $force,
         bool $includeCreditMigrations,
+        bool $includeSiteLimitMigrations = false,
         ?OutputInterface $output = null,
     ): array {
         $lines = [];
@@ -67,6 +68,11 @@ final class ApplicationCodePublisher
         if ($includeCreditMigrations) {
             $this->copyMigrationDirectory($packageRoot.'/database/migrations/credits', $migDest, $force, $output);
             $lines[] = 'Published credit migrations to database/migrations.';
+        }
+
+        if ($includeSiteLimitMigrations) {
+            $this->copyMigrationDirectory($packageRoot.'/database/migrations/site-limit', $migDest, $force, $output);
+            $lines[] = 'Published site-limit migrations to database/migrations.';
         }
 
         return $lines;

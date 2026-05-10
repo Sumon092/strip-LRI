@@ -39,6 +39,10 @@ class StripeLriServiceProvider extends ServiceProvider
             if ((bool) $this->app->make('config')->get('stripe-lri.credit_based')) {
                 $this->loadMigrationsFrom(__DIR__.'/../database/migrations/credits');
             }
+
+            if ((bool) $this->app->make('config')->get('stripe-lri.site_limit')) {
+                $this->loadMigrationsFrom(__DIR__.'/../database/migrations/site-limit');
+            }
         }
     }
 

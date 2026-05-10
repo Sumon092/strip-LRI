@@ -55,6 +55,7 @@ class BillingUsersController extends Controller
         $sessions = UserPresenter::latestSessionsForUserIds($ids);
 
         $creditBased = (bool) config('stripe-lri.credit_based');
+        $siteLimited = (bool) config('stripe-lri.site_limit');
 
         $creditMap = ($creditBased && $ids !== [])
             ? DB::table('subscription_product_user as spu')
@@ -71,7 +72,22 @@ class BillingUsersController extends Controller
                 ->keyBy('user_id')
             : collect();
 
-        $rows = $paginator->getCollection()->map(function (Model $u) use ($sessions, $creditMap, $creditBased): array {
+        $siteMap = ($siteLimited && $ids !== [])
+            ? DB::table('subscription_product_user as spu')
+                ->join('subscription_products as sp', 'sp.id', '=', 'spu.subscription_product_id')
+                ->whereIn('spu.user_id', $ids)
+                ->where('spu.is_active', true)
+                ->groupBy('spu.user_id')
+                ->select([
+                    'spu.user_id',
+                    DB::raw('SUM(spu.site_count) as total_site_count'),
+                    DB::raw('SUM(sp.site_limit) as total_site_limit'),
+                ])
+                ->get()
+                ->keyBy('user_id')
+            : collect();
+
+        $rows = $paginator->getCollection()->map(function (Model $u) use ($sessions, $creditMap, $creditBased, $siteMap, $siteLimited): array {
             $row  = UserPresenter::row($u, $sessions);
             $cred = $creditBased ? $creditMap->get((int) $u->getKey()) : null;
             if ($cred !== null) {
@@ -81,6 +97,14 @@ class BillingUsersController extends Controller
                 $row['remaining_credits'] = $balance;
                 $row['credits_used']      = max(0, $plan - $balance);
                 $row['type']              = 'Premium';
+            }
+            $site = $siteLimited ? $siteMap->get((int) $u->getKey()) : null;
+            if ($site !== null) {
+                $row['site_count'] = (int) $site->total_site_count;
+                $row['site_limit'] = (int) $site->total_site_limit;
+            } else {
+                $row['site_count'] = 0;
+                $row['site_limit'] = 0;
             }
             return $row;
         })->values()->all();
@@ -94,6 +118,7 @@ class BillingUsersController extends Controller
 
         return Inertia::render('Admin/Users', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
+            'siteLimited' => (bool) config('stripe-lri.site_limit'),
             'stats' => $stats,
             'users' => $paginator,
             'signupTrend' => UserPresenter::signupTrendLast7Days(),
@@ -124,7 +149,7 @@ class BillingUsersController extends Controller
         $sessions = UserPresenter::latestSessionsForUserIds([(int) $model->getKey()]);
 
         return Inertia::render('Admin/Users/Show', array_merge(
-            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'user' => UserPresenter::row($model, $sessions)],
+            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'siteLimited' => (bool) config('stripe-lri.site_limit'), 'user' => UserPresenter::row($model, $sessions)],
             $this->billingPayload((int) $model->getKey()),
         ));
     }
@@ -135,7 +160,7 @@ class BillingUsersController extends Controller
         $sessions = UserPresenter::latestSessionsForUserIds([(int) $model->getKey()]);
 
         return Inertia::render('Admin/Users/Edit', array_merge(
-            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'user' => UserPresenter::row($model, $sessions)],
+            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'siteLimited' => (bool) config('stripe-lri.site_limit'), 'user' => UserPresenter::row($model, $sessions)],
             $this->billingPayload((int) $model->getKey()),
         ));
     }

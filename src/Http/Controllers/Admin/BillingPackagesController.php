@@ -40,6 +40,7 @@ class BillingPackagesController extends Controller
 
         return Inertia::render('Admin/Packages/Index', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
+            'siteLimited' => (bool) config('stripe-lri.site_limit'),
             'canCreatePackages' => $canCreatePackages,
             'packagesCreateBlockReason' => $canCreatePackages ? null : StripeWebhookCatalogGate::denyMessage(),
             'products' => $paginator,
@@ -56,6 +57,7 @@ class BillingPackagesController extends Controller
 
         return Inertia::render('Admin/Packages/Create', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
+            'siteLimited' => (bool) config('stripe-lri.site_limit'),
             'form' => PackagePresenter::emptyForm(),
         ]);
     }
@@ -69,6 +71,7 @@ class BillingPackagesController extends Controller
 
         return Inertia::render('Admin/Packages/Edit', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
+            'siteLimited' => (bool) config('stripe-lri.site_limit'),
             'productId' => (int) $model->getKey(),
             'form' => PackagePresenter::toForm($model),
         ]);

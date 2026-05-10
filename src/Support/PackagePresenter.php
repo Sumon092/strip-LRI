@@ -20,6 +20,7 @@ final class PackagePresenter
             'stripe_product_id' => '',
             'package_type' => 'stripe_plan',
             'credit_limit' => 0,
+            'site_limit' => 0,
             'status' => 'draft',
             'description' => '',
             'items' => [['id' => null, 'name' => '']],
@@ -52,6 +53,11 @@ final class PackagePresenter
             $creditLimit = (int) $p->getAttribute('credits_limit');
         }
 
+        $siteLimit = (int) ($meta['site_limit'] ?? 0);
+        if ($siteLimit === 0 && Schema::hasColumn($p->getTable(), 'site_limit') && $p->getAttribute('site_limit') !== null) {
+            $siteLimit = (int) $p->getAttribute('site_limit');
+        }
+
         $status = (string) $p->status;
         if (! in_array($status, ['active', 'inactive', 'draft'], true)) {
             $status = 'active';
@@ -65,6 +71,7 @@ final class PackagePresenter
             'payment_type' => (string) ($meta['payment_type'] ?? 'subscription'),
             'user_scope' => (string) ($meta['user_scope'] ?? 'All'),
             'credit_limit' => $creditLimit,
+            'site_limit' => $siteLimit,
             'status' => $status,
             'description' => (string) ($p->description ?? ''),
             'active' => $status === 'active',
@@ -89,6 +96,11 @@ final class PackagePresenter
             $creditLimit = (int) $p->getAttribute('credits_limit');
         }
 
+        $siteLimit = (int) ($meta['site_limit'] ?? 0);
+        if ($siteLimit === 0 && Schema::hasColumn($p->getTable(), 'site_limit') && $p->getAttribute('site_limit') !== null) {
+            $siteLimit = (int) $p->getAttribute('site_limit');
+        }
+
         $status = (string) $p->status;
         if (! in_array($status, ['active', 'inactive', 'draft'], true)) {
             $status = 'active';
@@ -99,6 +111,7 @@ final class PackagePresenter
             'stripe_product_id' => (string) ($p->stripe_product_id ?? ''),
             'package_type' => (string) ($meta['package_type'] ?? $p->plan_type ?? 'stripe_plan'),
             'credit_limit' => $creditLimit,
+            'site_limit' => $siteLimit,
             'status' => $status,
             'description' => (string) ($p->description ?? ''),
             'items' => self::normalizeItemsForForm($items),
@@ -120,6 +133,7 @@ final class PackagePresenter
             'payment_type' => isset($validated['payment_type']) ? (string) $validated['payment_type'] : 'subscription',
             'user_scope' => isset($validated['user_scope']) ? (string) $validated['user_scope'] : 'All',
             'credit_limit' => (int) ($validated['credit_limit'] ?? 0),
+            'site_limit' => (int) ($validated['site_limit'] ?? 0),
             'items' => $items,
             'prices' => $prices,
         ];
@@ -154,6 +168,10 @@ final class PackagePresenter
 
         if (Schema::hasColumn((new Package)->getTable(), 'credits_limit')) {
             $attrs['credits_limit'] = (int) ($validated['credit_limit'] ?? 0);
+        }
+
+        if (Schema::hasColumn((new Package)->getTable(), 'site_limit')) {
+            $attrs['site_limit'] = (int) ($validated['site_limit'] ?? 0);
         }
 
         return $attrs;
