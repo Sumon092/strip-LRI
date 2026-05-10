@@ -54,7 +54,9 @@ class BillingUsersController extends Controller
         $ids = $paginator->getCollection()->pluck($userClass::make()->getKeyName())->all();
         $sessions = UserPresenter::latestSessionsForUserIds($ids);
 
-        $creditMap = $ids !== []
+        $creditBased = (bool) config('stripe-lri.credit_based');
+
+        $creditMap = ($creditBased && $ids !== [])
             ? DB::table('subscription_product_user as spu')
                 ->join('subscription_products as sp', 'sp.id', '=', 'spu.subscription_product_id')
                 ->whereIn('spu.user_id', $ids)
@@ -69,9 +71,9 @@ class BillingUsersController extends Controller
                 ->keyBy('user_id')
             : collect();
 
-        $rows = $paginator->getCollection()->map(function (Model $u) use ($sessions, $creditMap): array {
+        $rows = $paginator->getCollection()->map(function (Model $u) use ($sessions, $creditMap, $creditBased): array {
             $row  = UserPresenter::row($u, $sessions);
-            $cred = $creditMap->get((int) $u->getKey());
+            $cred = $creditBased ? $creditMap->get((int) $u->getKey()) : null;
             if ($cred !== null) {
                 $plan    = (int) $cred->total_plan;
                 $balance = (int) $cred->total_balance;
