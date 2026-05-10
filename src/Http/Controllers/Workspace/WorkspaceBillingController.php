@@ -91,10 +91,15 @@ class WorkspaceBillingController extends Controller
             'metadata'                  => ['stripe_price_id' => $priceId],
         ];
 
+        // discounts and allow_promotion_codes are mutually exclusive in Stripe.
+        // When a coupon is pre-applied we attach it directly; otherwise we show
+        // Stripe's native promotion-code input so the user can enter a Stripe
+        // Promotion Code (configured in your Stripe dashboard) at checkout.
         if ($discounts !== []) {
             $params['discounts'] = $discounts;
+        } else {
+            $params['allow_promotion_codes'] = true;
         }
-        // allow_promotion_codes is intentionally omitted (defaults to false in Stripe)
 
         try {
             $session = (new StripeClient($secret))->checkout->sessions->create($params);
