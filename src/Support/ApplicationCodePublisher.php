@@ -202,6 +202,7 @@ final class ApplicationCodePublisher
             'StripeLri\\Services\\NullCreditLedger' => 'App\\Services\\Billing\\NullCreditLedger',
             'StripeLri\\Services\\StripeProductPushService' => 'App\\Services\\Billing\\StripeProductPushService',
             'StripeLri\\Services\\StripeWebhookProcessor' => 'App\\Services\\Billing\\StripeWebhookProcessor',
+            'StripeLri\\Services\\UserBillingService' => 'App\\Services\\Billing\\UserBillingService',
             'StripeLri\\Models\\SubscriptionItem' => 'App\\Models\\Billing\\SubscriptionItem',
         ];
     }
@@ -239,6 +240,12 @@ final class ApplicationCodePublisher
             'App\\Services\\Billing',
         );
         $this->files->put(app_path('Services/Billing/DatabaseCreditLedger.php'), $ledgerDb);
+
+        $userBilling = $this->transformPhpSource(
+            $this->files->get($packageRoot.'/src/Services/UserBillingService.php'),
+            'App\\Services\\Billing',
+        );
+        $this->files->put(app_path('Services/Billing/UserBillingService.php'), $userBilling);
     }
 
     private function publishConsoleCommands(): void
@@ -433,12 +440,7 @@ class StripeLriServiceProvider extends ServiceProvider
             }
         );
 
-        // UserBillingService lives in the package vendor and is always available
-        // via its fully-qualified class name. Register it as a singleton so it can
-        // be resolved with app() or constructor injection anywhere in your app.
-        if (class_exists(\StripeLri\Services\UserBillingService::class)) {
-            $this->app->singleton(\StripeLri\Services\UserBillingService::class);
-        }
+        $this->app->singleton(\App\Services\Billing\UserBillingService::class);
     }
 
     public function boot(): void
