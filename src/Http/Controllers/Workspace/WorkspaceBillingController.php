@@ -57,9 +57,11 @@ class WorkspaceBillingController extends Controller
             return back()->with('error', 'Stripe is not configured. Set STRIPE_SECRET in .env.');
         }
 
-        // Resolve coupon → Stripe discount or fall back to native promo code input
-        $discounts       = [];
-        $allowPromoCodes = true;
+        // Coupon validation is handled entirely by our app — never expose Stripe's
+        // native promo-code input (allow_promotion_codes) because our coupon codes
+        // live only in the local DB and are not registered as Stripe Promotion Code
+        // objects, so Stripe would reject them with 400 if entered on its checkout page.
+        $discounts = [];
 
         if ($couponCode !== '') {
             $coupon = $this->findValidCoupon($couponCode);
@@ -74,7 +76,6 @@ class WorkspaceBillingController extends Controller
                 $discounts = str_starts_with($stripeId, 'promo_')
                     ? [['promotion_code' => $stripeId]]
                     : [['coupon'         => $stripeId]];
-                $allowPromoCodes = false;
             }
         }
 
@@ -92,9 +93,8 @@ class WorkspaceBillingController extends Controller
 
         if ($discounts !== []) {
             $params['discounts'] = $discounts;
-        } else {
-            $params['allow_promotion_codes'] = $allowPromoCodes;
         }
+        // allow_promotion_codes is intentionally omitted (defaults to false in Stripe)
 
         try {
             $session = (new StripeClient($secret))->checkout->sessions->create($params);
