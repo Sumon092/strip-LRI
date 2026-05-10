@@ -701,6 +701,21 @@ PHP;
             );
         }
 
+        // ── 3b. Inject coupon/validate route if checkout exists but validate doesn't ──
+        if (str_contains($content, "'checkout.create'") && ! str_contains($content, "'coupon.validate'")) {
+            $content = str_replace(
+                "Route::post('/checkout', [WorkspaceBillingController::class, 'checkout'])->name('checkout.create');",
+                "Route::post('/checkout', [WorkspaceBillingController::class, 'checkout'])->name('checkout.create');\n        Route::post('/coupon/validate', [WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');",
+                $content,
+            );
+            // Also handle fully-qualified class name variant (patchWebRoutes inlined block)
+            $content = str_replace(
+                "Route::post('/checkout', [\\App\\Http\\Controllers\\Workspace\\WorkspaceBillingController::class, 'checkout'])->name('checkout.create');",
+                "Route::post('/checkout', [\\App\\Http\\Controllers\\Workspace\\WorkspaceBillingController::class, 'checkout'])->name('checkout.create');\n        Route::post('/coupon/validate', [\\App\\Http\\Controllers\\Workspace\\WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');",
+                $content,
+            );
+        }
+
         // ── 4. Add workspace billing routes if missing ─────────────────────────
         if (! str_contains($content, 'billing-history')) {
             $workspaceBlock = <<<'PHP'
