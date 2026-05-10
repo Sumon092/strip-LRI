@@ -590,19 +590,22 @@ PHP;
         $original = $content;
 
         // ── 1. Replace stub Route:: controller class references ───────────────
+        // All swaps are skipped when the real billing class is already referenced in Route calls
+        // (e.g. inside a class_exists() if/else block) — swapping would corrupt the else branch.
+
         // AdminSectionController billing-method redirects (only billing methods, not accountLogs/credentials)
-        $billingMethodsOnSectionController = ['transactions', 'invoices', 'premiumCustomers'];
-        foreach ($billingMethodsOnSectionController as $method) {
-            $content = str_replace(
-                "[AdminSectionController::class, '{$method}']",
-                "[BillingLedgerController::class, '{$method}']",
-                $content,
-            );
+        if (! str_contains($content, 'BillingLedgerController::class')) {
+            $billingMethodsOnSectionController = ['transactions', 'invoices', 'premiumCustomers'];
+            foreach ($billingMethodsOnSectionController as $method) {
+                $content = str_replace(
+                    "[AdminSectionController::class, '{$method}']",
+                    "[BillingLedgerController::class, '{$method}']",
+                    $content,
+                );
+            }
         }
 
         // Full stub-controller → real-controller swaps.
-        // Skip each swap when the billing class is already referenced (e.g. inside a
-        // class_exists() if/else block in the template) — swapping would corrupt the else branch.
         $classSwaps = [
             'AdminUsersController::class'    => 'BillingUsersController::class',
             'AdminPackagesController::class' => 'BillingPackagesController::class',
@@ -677,14 +680,17 @@ PHP;
         if (! str_contains($content, 'billing-history')) {
             $workspaceBlock = <<<'PHP'
 
-// Workspace billing routes (stripe-lri) — guarded so removing the published
-// controllers reverts gracefully: routes vanish from Ziggy, sidebar hides them.
+// Workspace billing routes — real controller after stripe-lri:install, stub fallback otherwise.
 Route::middleware(['auth', 'verified'])->group(function (): void {
     if (class_exists(\App\Http\Controllers\Workspace\WorkspaceBillingController::class)) {
         Route::get('/billing-history', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'billingHistory'])->name('billing-history.index');
         Route::get('/dashboard/pricing-plans', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'pricingPlans'])->name('pricing-plans.index');
         Route::get('/subscription', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'subscription'])->name('subscription.index');
         Route::post('/checkout', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'checkout'])->name('checkout.create');
+    } else {
+        Route::get('/billing-history', [\App\Http\Controllers\WorkspaceController::class, 'billingHistory'])->name('billing-history.index');
+        Route::get('/dashboard/pricing-plans', [\App\Http\Controllers\WorkspaceController::class, 'pricingPlans'])->name('pricing-plans.index');
+        Route::get('/subscription', [\App\Http\Controllers\WorkspaceController::class, 'subscription'])->name('subscription.index');
     }
 });
 
@@ -698,8 +704,7 @@ PHP;
         if (! str_contains($content, 'BillingUsersController::class')) {
             $adminBillingBlock = <<<'PHP'
 
-// Admin billing routes (stripe-lri) — guarded so removing published controllers
-// reverts gracefully: routes vanish from Ziggy, sidebar hides them automatically.
+// Admin billing routes — real controllers after stripe-lri:install, stub fallbacks otherwise.
 Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.')->group(function (): void {
     if (class_exists(\App\Http\Controllers\Admin\BillingUsersController::class)) {
         Route::get('/users', [\App\Http\Controllers\Admin\BillingUsersController::class, 'index'])->name('users.index');
@@ -709,6 +714,14 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
         Route::post('/users/{user}/credits', [\App\Http\Controllers\Admin\BillingUsersController::class, 'adjustCredits'])->whereNumber('user')->name('users.credits.adjust');
         Route::post('/users/{user}/impersonate', [\App\Http\Controllers\Admin\BillingUsersController::class, 'impersonate'])->whereNumber('user')->name('users.impersonate');
         Route::delete('/users/{user}', [\App\Http\Controllers\Admin\BillingUsersController::class, 'destroy'])->whereNumber('user')->name('users.destroy');
+    } else {
+        Route::get('/users', [\App\Http\Controllers\Admin\AdminUsersController::class, 'index'])->name('users.index');
+        Route::get('/users/{user}', [\App\Http\Controllers\Admin\AdminUsersController::class, 'show'])->whereNumber('user')->name('users.show');
+        Route::get('/users/{user}/edit', [\App\Http\Controllers\Admin\AdminUsersController::class, 'edit'])->whereNumber('user')->name('users.edit');
+        Route::patch('/users/{user}', [\App\Http\Controllers\Admin\AdminUsersController::class, 'update'])->whereNumber('user')->name('users.update');
+        Route::post('/users/{user}/credits', [\App\Http\Controllers\Admin\AdminUsersController::class, 'adjustCredits'])->whereNumber('user')->name('users.credits.adjust');
+        Route::post('/users/{user}/impersonate', [\App\Http\Controllers\Admin\AdminUsersController::class, 'impersonate'])->whereNumber('user')->name('users.impersonate');
+        Route::delete('/users/{user}', [\App\Http\Controllers\Admin\AdminUsersController::class, 'destroy'])->whereNumber('user')->name('users.destroy');
     }
 
     if (class_exists(\App\Http\Controllers\Admin\BillingPackagesController::class)) {
@@ -718,6 +731,12 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
         Route::get('/packages/{package}/edit', [\App\Http\Controllers\Admin\BillingPackagesController::class, 'edit'])->whereNumber('package')->name('packages.edit');
         Route::put('/packages/{package}', [\App\Http\Controllers\Admin\BillingPackagesController::class, 'update'])->whereNumber('package')->name('packages.update');
         Route::delete('/packages/{package}', [\App\Http\Controllers\Admin\BillingPackagesController::class, 'destroy'])->whereNumber('package')->name('packages.destroy');
+    } else {
+        Route::get('/packages', [\App\Http\Controllers\Admin\AdminPackagesController::class, 'index'])->name('packages.index');
+        Route::get('/packages/create', [\App\Http\Controllers\Admin\AdminPackagesController::class, 'create'])->name('packages.create');
+        Route::post('/packages', [\App\Http\Controllers\Admin\AdminPackagesController::class, 'store'])->name('packages.store');
+        Route::get('/packages/{package}/edit', [\App\Http\Controllers\Admin\AdminPackagesController::class, 'edit'])->whereNumber('package')->name('packages.edit');
+        Route::put('/packages/{package}', [\App\Http\Controllers\Admin\AdminPackagesController::class, 'update'])->whereNumber('package')->name('packages.update');
     }
 
     if (class_exists(\App\Http\Controllers\Admin\BillingCouponsController::class)) {
@@ -727,6 +746,12 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
         Route::get('/coupons/{coupon}/edit', [\App\Http\Controllers\Admin\BillingCouponsController::class, 'edit'])->whereNumber('coupon')->name('coupons.edit');
         Route::put('/coupons/{coupon}', [\App\Http\Controllers\Admin\BillingCouponsController::class, 'update'])->whereNumber('coupon')->name('coupons.update');
         Route::delete('/coupons/{coupon}', [\App\Http\Controllers\Admin\BillingCouponsController::class, 'destroy'])->whereNumber('coupon')->name('coupons.destroy');
+    } else {
+        Route::get('/coupons', [\App\Http\Controllers\Admin\AdminCouponsController::class, 'index'])->name('coupons.index');
+        Route::get('/coupons/create', [\App\Http\Controllers\Admin\AdminCouponsController::class, 'create'])->name('coupons.create');
+        Route::post('/coupons', [\App\Http\Controllers\Admin\AdminCouponsController::class, 'store'])->name('coupons.store');
+        Route::get('/coupons/{coupon}/edit', [\App\Http\Controllers\Admin\AdminCouponsController::class, 'edit'])->whereNumber('coupon')->name('coupons.edit');
+        Route::put('/coupons/{coupon}', [\App\Http\Controllers\Admin\AdminCouponsController::class, 'update'])->whereNumber('coupon')->name('coupons.update');
     }
 
     if (class_exists(\App\Http\Controllers\Admin\BillingLedgerController::class)) {
@@ -734,6 +759,10 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
         Route::get('/invoices', [\App\Http\Controllers\Admin\BillingLedgerController::class, 'invoices'])->name('invoices.index');
         Route::get('/premium-customers', [\App\Http\Controllers\Admin\BillingLedgerController::class, 'premiumCustomers'])->name('premium-customers.index');
         Route::get('/premium-customers/revenue-month', [\App\Http\Controllers\Admin\BillingLedgerController::class, 'premiumRevenueMonth'])->name('premium-customers.revenue-month');
+    } else {
+        Route::get('/transactions', [\App\Http\Controllers\Admin\AdminSectionController::class, 'transactions'])->name('transactions.index');
+        Route::get('/invoices', [\App\Http\Controllers\Admin\AdminSectionController::class, 'invoices'])->name('invoices.index');
+        Route::get('/premium-customers', [\App\Http\Controllers\Admin\AdminSectionController::class, 'premiumCustomers'])->name('premium-customers.index');
     }
 });
 
