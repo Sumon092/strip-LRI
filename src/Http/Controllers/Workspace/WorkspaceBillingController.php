@@ -21,6 +21,27 @@ use StripeLri\Models\SubscriptionProductUser;
 
 class WorkspaceBillingController extends Controller
 {
+    public function validateCoupon(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $code = trim((string) $request->input('coupon_code', ''));
+
+        if ($code === '') {
+            return response()->json(['valid' => false, 'message' => 'Please enter a coupon code.']);
+        }
+
+        $coupon = $this->findValidCoupon($code);
+
+        if ($coupon === null) {
+            return response()->json(['valid' => false, 'message' => 'This code is invalid or has expired.']);
+        }
+
+        return response()->json([
+            'valid'    => true,
+            'message'  => 'Coupon applied: '.$this->couponDiscountLabel($coupon),
+            'discount' => $this->couponDiscountLabel($coupon),
+        ]);
+    }
+
     public function checkout(Request $request): RedirectResponse|HttpResponse
     {
         $priceId    = (string) $request->input('price_id', '');
@@ -37,21 +58,22 @@ class WorkspaceBillingController extends Controller
         }
 
         // Resolve coupon → Stripe discount or fall back to native promo code input
-        $discounts          = [];
-        $allowPromoCodes    = true;
+        $discounts       = [];
+        $allowPromoCodes = true;
 
         if ($couponCode !== '') {
-            $coupon = Coupon::where('code', $couponCode)
-                ->where('active', true)
-                ->whereNull('deleted_at')
-                ->first();
+            $coupon = $this->findValidCoupon($couponCode);
 
             if ($coupon === null) {
                 return back()->with('error', 'Coupon code "'.$couponCode.'" is invalid or has expired.');
             }
 
             if ($coupon->stripe_coupon_id) {
-                $discounts       = [['coupon' => $coupon->stripe_coupon_id]];
+                $stripeId = (string) $coupon->stripe_coupon_id;
+                // Stripe distinguishes coupon IDs from promotion code IDs (prefix: promo_)
+                $discounts = str_starts_with($stripeId, 'promo_')
+                    ? [['promotion_code' => $stripeId]]
+                    : [['coupon'         => $stripeId]];
                 $allowPromoCodes = false;
             }
         }
@@ -432,5 +454,47 @@ class WorkspaceBillingController extends Controller
         $end   = $row->expires_at ? self::fmt($row->expires_at) : 'Ongoing';
 
         return "{$start} – {$end}";
+    }
+
+    private function findValidCoupon(string $code): ?Coupon
+    {
+        $coupon = Coupon::where('code', $code)
+            ->where('active', true)
+            ->whereNull('deleted_at')
+            ->first();
+
+        if ($coupon === null) {
+            return null;
+        }
+
+        // Check expiry date
+        if ($coupon->redeem_by !== null && $coupon->redeem_by->isPast()) {
+            return null;
+        }
+
+        // Check redemption limit exhaustion
+        if ($coupon->max_redemptions !== null && $coupon->times_redeemed >= $coupon->max_redemptions) {
+            return null;
+        }
+
+        return $coupon;
+    }
+
+    private function couponDiscountLabel(Coupon $coupon): string
+    {
+        if ($coupon->percent_off !== null) {
+            return rtrim(rtrim((string) $coupon->percent_off, '0'), '.').'% off';
+        }
+        if ($coupon->amount_off !== null) {
+            $symbol = match (strtolower((string) ($coupon->currency ?? 'usd'))) {
+                'eur'   => '€',
+                'gbp'   => '£',
+                default => '$',
+            };
+
+            return $symbol.number_format($coupon->amount_off / 100, 2).' off';
+        }
+
+        return 'Discount applied';
     }
 }

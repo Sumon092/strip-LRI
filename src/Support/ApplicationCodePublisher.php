@@ -366,6 +366,8 @@ if (config('stripe-lri.register_routes', false)) {
             ->name('subscription.index');
         Route::post('/checkout', [WorkspaceBillingController::class, 'checkout'])
             ->name('checkout.create');
+        Route::post('/coupon/validate', [WorkspaceBillingController::class, 'validateCoupon'])
+            ->name('coupon.validate');
     });
 
     Route::middleware($adminMw)->prefix('admin')->name('admin.')->group(function (): void {
@@ -710,6 +712,7 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
         Route::get('/dashboard/pricing-plans', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'pricingPlans'])->name('pricing-plans.index');
         Route::get('/subscription', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'subscription'])->name('subscription.index');
         Route::post('/checkout', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'checkout'])->name('checkout.create');
+        Route::post('/coupon/validate', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');
     } else {
         Route::get('/billing-history', [\App\Http\Controllers\WorkspaceController::class, 'billingHistory'])->name('billing-history.index');
         Route::get('/dashboard/pricing-plans', [\App\Http\Controllers\WorkspaceController::class, 'pricingPlans'])->name('pricing-plans.index');

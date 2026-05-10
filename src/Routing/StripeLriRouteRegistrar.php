@@ -49,6 +49,8 @@ final class StripeLriRouteRegistrar
                 ->name('subscription.index');
             Route::post('/checkout', ["{$c}\\Workspace\\WorkspaceBillingController", 'checkout'])
                 ->name('checkout.create');
+            Route::post('/coupon/validate', ["{$c}\\Workspace\\WorkspaceBillingController", 'validateCoupon'])
+                ->name('coupon.validate');
         });
 
         Route::middleware($adminMw)->prefix('admin')->name('admin.')->group(function () use ($c): void {
