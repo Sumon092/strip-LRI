@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 use Inertia\Response;
 use Stripe\StripeClient;
+use StripeLri\Models\Coupon;
 use StripeLri\Models\Invoice;
 use StripeLri\Models\Package;
 use StripeLri\Models\Payment;
@@ -22,8 +23,9 @@ class WorkspaceBillingController extends Controller
 {
     public function checkout(Request $request): RedirectResponse|HttpResponse
     {
-        $priceId  = (string) $request->input('price_id', '');
-        $planType = (string) $request->input('plan_type', 'monthly');
+        $priceId    = (string) $request->input('price_id', '');
+        $planType   = (string) $request->input('plan_type', 'monthly');
+        $couponCode = trim((string) $request->input('coupon_code', ''));
 
         if ($priceId === '') {
             return back()->with('error', 'No price selected.');
@@ -34,18 +36,46 @@ class WorkspaceBillingController extends Controller
             return back()->with('error', 'Stripe is not configured. Set STRIPE_SECRET in .env.');
         }
 
+        // Resolve coupon → Stripe discount or fall back to native promo code input
+        $discounts          = [];
+        $allowPromoCodes    = true;
+
+        if ($couponCode !== '') {
+            $coupon = Coupon::where('code', $couponCode)
+                ->where('active', true)
+                ->whereNull('deleted_at')
+                ->first();
+
+            if ($coupon === null) {
+                return back()->with('error', 'Coupon code "'.$couponCode.'" is invalid or has expired.');
+            }
+
+            if ($coupon->stripe_coupon_id) {
+                $discounts       = [['coupon' => $coupon->stripe_coupon_id]];
+                $allowPromoCodes = false;
+            }
+        }
+
         $mode = $planType === 'lifetime' ? 'payment' : 'subscription';
 
+        $params = [
+            'payment_method_types' => ['card'],
+            'line_items'           => [['price' => $priceId, 'quantity' => 1]],
+            'mode'                 => $mode,
+            'success_url'          => route('subscription.index', ['checkout' => 'success']),
+            'cancel_url'           => route('pricing-plans.index'),
+            'customer_email'       => $request->user()?->email,
+            'metadata'             => ['stripe_price_id' => $priceId],
+        ];
+
+        if ($discounts !== []) {
+            $params['discounts'] = $discounts;
+        } else {
+            $params['allow_promotion_codes'] = $allowPromoCodes;
+        }
+
         try {
-            $session = (new StripeClient($secret))->checkout->sessions->create([
-                'payment_method_types' => ['card'],
-                'line_items'           => [['price' => $priceId, 'quantity' => 1]],
-                'mode'                 => $mode,
-                'success_url'          => route('subscription.index', ['checkout' => 'success']),
-                'cancel_url'           => route('pricing-plans.index'),
-                'customer_email'       => $request->user()?->email,
-                'metadata'             => ['stripe_price_id' => $priceId],
-            ]);
+            $session = (new StripeClient($secret))->checkout->sessions->create($params);
 
             return Inertia::location((string) $session->url);
         } catch (\Throwable $e) {
@@ -162,20 +192,22 @@ class WorkspaceBillingController extends Controller
                 $isRecurring = in_array($planType, ['monthly', 'yearly'], true);
 
                 $plans[$planType][] = [
-                    'product_id'         => (int) $pkg->getKey(),
-                    'product_name'       => (string) $pkg->plan_name,
+                    'product_id'          => (int) $pkg->getKey(),
+                    'product_name'        => (string) $pkg->plan_name,
                     'product_description' => $pkg->description,
-                    'credit_limit'       => $creditBased ? (int) ($pkg->credits_limit ?? $pkg->getAttribute('credits_limit') ?? 0) : null,
-                    'site_limit'         => $siteLimited ? (int) ($pkg->site_limit ?? $pkg->getAttribute('site_limit') ?? 0) : null,
-                    'stripe_price_id'    => (string) $price->stripe_price_id,
-                    'plan_type'          => $planType,
-                    'nickname'           => $price->nickname ?: null,
-                    'currency'           => (string) ($price->currency ?? 'usd'),
-                    'amount'             => (int) round((float) $price->amount * 100),
-                    'type'               => $isRecurring ? 'subscription' : 'one_time',
-                    'interval'           => $planType === 'monthly' ? 'month' : ($planType === 'yearly' ? 'year' : null),
-                    'interval_count'     => $isRecurring ? 1 : null,
-                    'features'           => $features,
+                    'credit_limit'        => $creditBased ? (int) ($pkg->credits_limit ?? $pkg->getAttribute('credits_limit') ?? 0) : null,
+                    'site_limit'          => $siteLimited ? (int) ($pkg->site_limit ?? $pkg->getAttribute('site_limit') ?? 0) : null,
+                    'is_popular'          => (bool) $pkg->is_popular,
+                    'is_featured'         => (bool) $pkg->is_featured,
+                    'stripe_price_id'     => (string) $price->stripe_price_id,
+                    'plan_type'           => $planType,
+                    'nickname'            => $price->nickname ?: null,
+                    'currency'            => (string) ($price->currency ?? 'usd'),
+                    'amount'              => (int) round((float) $price->amount * 100),
+                    'type'                => $isRecurring ? 'subscription' : 'one_time',
+                    'interval'            => $planType === 'monthly' ? 'month' : ($planType === 'yearly' ? 'year' : null),
+                    'interval_count'      => $isRecurring ? 1 : null,
+                    'features'            => $features,
                 ];
             }
         }

@@ -16,20 +16,22 @@ final class PackagePresenter
     public static function emptyForm(): array
     {
         return [
-            'name' => '',
+            'name'             => '',
             'stripe_product_id' => '',
-            'package_type' => 'stripe_plan',
-            'credit_limit' => 0,
-            'site_limit' => 0,
-            'status' => 'draft',
-            'description' => '',
-            'items' => [['id' => null, 'name' => '']],
-            'prices' => [
+            'package_type'     => 'stripe_plan',
+            'credit_limit'     => 0,
+            'site_limit'       => 0,
+            'status'           => 'draft',
+            'is_popular'       => false,
+            'is_featured'      => false,
+            'description'      => '',
+            'items'            => [['id' => null, 'name' => '']],
+            'prices'           => [
                 [
-                    'plan_type' => 'monthly',
+                    'plan_type'      => 'monthly',
                     'stripe_price_id' => null,
-                    'amount' => 0,
-                    'nickname' => 'Monthly',
+                    'amount'         => 0,
+                    'nickname'       => 'Monthly',
                 ],
             ],
         ];
@@ -40,8 +42,9 @@ final class PackagePresenter
      */
     public static function toIndexRow(Package $p): array
     {
-        $items = self::resolveItems($p);
+        $items  = self::resolveItems($p);
         $prices = self::resolvePrices($p);
+        $meta   = is_array($p->metadata) ? $p->metadata : [];
 
         $namedItems = array_values(array_filter(
             $items,
@@ -64,22 +67,24 @@ final class PackagePresenter
         }
 
         return [
-            'id' => (int) $p->getKey(),
+            'id'               => (int) $p->getKey(),
             'stripe_product_id' => (string) ($p->stripe_product_id ?? ''),
-            'name' => (string) $p->plan_name,
-            'package_type' => (string) ($meta['package_type'] ?? $p->plan_type ?? 'stripe_plan'),
-            'payment_type' => (string) ($meta['payment_type'] ?? 'subscription'),
-            'user_scope' => (string) ($meta['user_scope'] ?? 'All'),
-            'credit_limit' => $creditLimit,
-            'site_limit' => $siteLimit,
-            'status' => $status,
-            'description' => (string) ($p->description ?? ''),
-            'active' => $status === 'active',
-            'total_prices' => max(1, count($prices)),
-            'total_items' => max(1, count($namedItems) > 0 ? count($namedItems) : 1),
-            'last_synced_at' => $p->updated_at?->toIso8601String(),
-            'created_at' => $p->created_at?->toIso8601String(),
-            'updated_at' => $p->updated_at?->toIso8601String(),
+            'name'             => (string) $p->plan_name,
+            'package_type'     => (string) ($meta['package_type'] ?? $p->plan_type ?? 'stripe_plan'),
+            'payment_type'     => (string) ($meta['payment_type'] ?? 'subscription'),
+            'user_scope'       => (string) ($meta['user_scope'] ?? 'All'),
+            'credit_limit'     => $creditLimit,
+            'site_limit'       => $siteLimit,
+            'is_popular'       => (bool) $p->is_popular,
+            'is_featured'      => (bool) $p->is_featured,
+            'status'           => $status,
+            'description'      => (string) ($p->description ?? ''),
+            'active'           => $status === 'active',
+            'total_prices'     => max(1, count($prices)),
+            'total_items'      => max(1, count($namedItems) > 0 ? count($namedItems) : 1),
+            'last_synced_at'   => $p->updated_at?->toIso8601String(),
+            'created_at'       => $p->created_at?->toIso8601String(),
+            'updated_at'       => $p->updated_at?->toIso8601String(),
         ];
     }
 
@@ -88,8 +93,9 @@ final class PackagePresenter
      */
     public static function toForm(Package $p): array
     {
-        $items = self::resolveItems($p);
+        $items  = self::resolveItems($p);
         $prices = self::resolvePrices($p);
+        $meta   = is_array($p->metadata) ? $p->metadata : [];
 
         $creditLimit = (int) ($meta['credit_limit'] ?? 0);
         if ($creditLimit === 0 && Schema::hasColumn($p->getTable(), 'credits_limit') && $p->getAttribute('credits_limit') !== null) {
@@ -107,15 +113,17 @@ final class PackagePresenter
         }
 
         return [
-            'name' => (string) $p->plan_name,
+            'name'             => (string) $p->plan_name,
             'stripe_product_id' => (string) ($p->stripe_product_id ?? ''),
-            'package_type' => (string) ($meta['package_type'] ?? $p->plan_type ?? 'stripe_plan'),
-            'credit_limit' => $creditLimit,
-            'site_limit' => $siteLimit,
-            'status' => $status,
-            'description' => (string) ($p->description ?? ''),
-            'items' => self::normalizeItemsForForm($items),
-            'prices' => self::normalizePricesForForm($prices),
+            'package_type'     => (string) ($meta['package_type'] ?? $p->plan_type ?? 'stripe_plan'),
+            'credit_limit'     => $creditLimit,
+            'site_limit'       => $siteLimit,
+            'status'           => $status,
+            'is_popular'       => (bool) $p->is_popular,
+            'is_featured'      => (bool) $p->is_featured,
+            'description'      => (string) ($p->description ?? ''),
+            'items'            => self::normalizeItemsForForm($items),
+            'prices'           => self::normalizePricesForForm($prices),
         ];
     }
 
@@ -159,9 +167,9 @@ final class PackagePresenter
                 : null,
             'stripe_product_id' => $productId,
             'metadata' => $meta,
-            'sort_order' => 0,
-            'is_popular' => false,
-            'is_featured' => false,
+            'sort_order'  => 0,
+            'is_popular'  => (bool) ($validated['is_popular'] ?? false),
+            'is_featured' => (bool) ($validated['is_featured'] ?? false),
             'allow_trial' => false,
             'max_devices' => null,
         ];

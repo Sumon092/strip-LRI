@@ -33,6 +33,8 @@ class UpdatePackageRequest extends FormRequest
             'credit_limit' => $creditRules,
             'site_limit' => $siteLimitRules,
             'status' => ['required', 'string', Rule::in(['active', 'inactive', 'draft'])],
+            'is_popular' => ['nullable', 'boolean'],
+            'is_featured' => ['nullable', 'boolean'],
             'description' => ['nullable', 'string'],
             'stripe_product_id' => ['nullable', 'string', 'max:255'],
             'payment_type' => ['nullable', 'string', 'max:64'],
@@ -57,5 +59,9 @@ class UpdatePackageRequest extends FormRequest
         if (! $this->has('site_limit') || $this->input('site_limit') === null) {
             $this->merge(['site_limit' => 0]);
         }
+        $this->merge([
+            'is_popular'  => (bool) $this->input('is_popular', false),
+            'is_featured' => (bool) $this->input('is_featured', false),
+        ]);
     }
 }
