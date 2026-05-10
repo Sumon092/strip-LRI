@@ -61,6 +61,7 @@ class BillingLedgerController extends Controller
     {
         $perPage = $this->perPage($request, [10, 12, 25, 50]);
         $creditBased = (bool) config('stripe-lri.credit_based');
+        $siteLimited = (bool) config('stripe-lri.site_limit');
 
         $paginator = Invoice::query()
             ->with(['user', 'product'])
@@ -83,6 +84,7 @@ class BillingLedgerController extends Controller
                 'period'        => self::fmt($inv->created_at),
                 'date'          => self::fmt($inv->paid_at ?? $inv->created_at),
                 'credits'       => $creditBased ? self::creditsLabel($inv) : null,
+                'site_limit'    => $siteLimited ? self::siteLimitLabel($inv) : null,
                 'viewUrl'       => $inv->stripe_invoice_url,
                 'pdfUrl'        => $inv->stripe_invoice_pdf,
             ]),
@@ -96,6 +98,7 @@ class BillingLedgerController extends Controller
 
         return Inertia::render('Admin/Invoices', [
             'creditBased' => $creditBased,
+            'siteLimited' => $siteLimited,
             'invoices'    => $paginator,
             'stats'       => $stats,
         ]);
@@ -305,6 +308,13 @@ class BillingLedgerController extends Controller
         $credits = (int) ($inv->getAttribute('credits_purchased') ?? 0);
 
         return $credits > 0 ? number_format($credits) : '—';
+    }
+
+    private static function siteLimitLabel(Invoice $inv): string
+    {
+        $limit = (int) ($inv->product?->getAttribute('site_limit') ?? 0);
+
+        return $limit > 0 ? number_format($limit) : '—';
     }
 
     private static function scheduleLine(SubscriptionProductUser $row): string
