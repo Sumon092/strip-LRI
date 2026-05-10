@@ -10,6 +10,7 @@ use StripeLri\Console\ProcessCreditsHistoryCommand;
 use StripeLri\Contracts\CreditLedger;
 use StripeLri\Routing\StripeLriRouteRegistrar;
 use StripeLri\Services\NullCreditLedger;
+use StripeLri\Services\UserBillingService;
 
 class StripeLriServiceProvider extends ServiceProvider
 {
@@ -32,6 +33,7 @@ class StripeLriServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/stripe-lri.php', 'stripe-lri');
 
         $this->app->singletonIf(CreditLedger::class, fn (): CreditLedger => new NullCreditLedger);
+        $this->app->singleton(UserBillingService::class);
 
         if (! (bool) $this->app->make('config')->get('stripe-lri.published_to_app', false)) {
             $this->loadMigrationsFrom(__DIR__.'/../database/migrations/core');

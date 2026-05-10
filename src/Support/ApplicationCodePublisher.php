@@ -432,6 +432,13 @@ class StripeLriServiceProvider extends ServiceProvider
                 return new \App\Services\Billing\NullCreditLedger;
             }
         );
+
+        // UserBillingService lives in the package vendor and is always available
+        // via its fully-qualified class name. Register it as a singleton so it can
+        // be resolved with app() or constructor injection anywhere in your app.
+        if (class_exists(\StripeLri\Services\UserBillingService::class)) {
+            $this->app->singleton(\StripeLri\Services\UserBillingService::class);
+        }
     }
 
     public function boot(): void
