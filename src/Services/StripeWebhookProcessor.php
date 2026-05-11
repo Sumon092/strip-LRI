@@ -357,6 +357,21 @@ class StripeWebhookProcessor
             }
         }
 
+        // Refill credits on subscription renewal (not on first payment — subscription.created handles that)
+        $billingReason = (string) ($invoice->billing_reason ?? '');
+        if ($creditBased && $product !== null && $user !== null && in_array($billingReason, ['subscription_cycle', 'subscription_update'], true)) {
+            $creditsLimit = (int) ($product->getAttribute('credits_limit') ?? 0);
+            if ($creditsLimit > 0) {
+                DatabaseCreditLedger::recordEntry(
+                    userId: (int) $user->getKey(),
+                    productId: (int) $product->getKey(),
+                    delta: $creditsLimit,
+                    entryType: 'renewal',
+                    description: 'Credits refilled for '.(string) ($product->plan_name ?? 'subscription').' renewal',
+                );
+            }
+        }
+
         // Sync subscription_product_user.expires_at from actual Stripe period
         $periodEnd = isset($line->period->end)
             ? Carbon::createFromTimestamp((int) $line->period->end)

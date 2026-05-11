@@ -51,6 +51,12 @@ final class StripeLriRouteRegistrar
                 ->name('checkout.create');
             Route::post('/coupon/validate', ["{$c}\\Workspace\\WorkspaceBillingController", 'validateCoupon'])
                 ->name('coupon.validate');
+            Route::post('/subscription/{subscriptionProductUser}/cancel', ["{$c}\\Workspace\\WorkspaceBillingController", 'cancel'])
+                ->whereNumber('subscriptionProductUser')
+                ->name('subscription.cancel');
+            Route::post('/subscription/{subscriptionProductUser}/resume', ["{$c}\\Workspace\\WorkspaceBillingController", 'resume'])
+                ->whereNumber('subscriptionProductUser')
+                ->name('subscription.resume');
         });
 
         Route::middleware($adminMw)->prefix('admin')->name('admin.')->group(function () use ($c): void {

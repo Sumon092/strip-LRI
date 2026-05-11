@@ -17,6 +17,7 @@ use StripeLri\Models\Coupon;
 use StripeLri\Models\Invoice;
 use StripeLri\Models\Package;
 use StripeLri\Models\Payment;
+use StripeLri\Models\Subscription;
 use StripeLri\Models\SubscriptionProductUser;
 
 class WorkspaceBillingController extends Controller
@@ -183,6 +184,70 @@ class WorkspaceBillingController extends Controller
         ]);
     }
 
+    public function cancel(Request $request, int $subscriptionProductUser): RedirectResponse
+    {
+        $row = SubscriptionProductUser::where('user_id', $request->user()?->getKey())
+            ->whereKey($subscriptionProductUser)
+            ->firstOrFail();
+
+        $stripeSubId = (string) ($row->stripe_subscription_id ?? '');
+        if ($stripeSubId === '') {
+            return back()->with('error', 'No Stripe subscription linked to this plan.');
+        }
+
+        $secret = trim((string) config('stripe-lri.stripe.secret', ''));
+        if ($secret === '') {
+            return back()->with('error', 'Stripe is not configured.');
+        }
+
+        try {
+            (new StripeClient($secret))->subscriptions->update($stripeSubId, [
+                'cancel_at_period_end' => true,
+            ]);
+
+            Subscription::where('stripe_subscription_id', $stripeSubId)
+                ->update(['cancel_at_period_end' => true]);
+        } catch (\Throwable $e) {
+            logger()->error('stripe-lri.cancel_failed', ['error' => $e->getMessage()]);
+
+            return back()->with('error', 'Could not schedule cancellation: '.$e->getMessage());
+        }
+
+        return back()->with('success', 'Subscription will cancel at end of billing period. You keep access until then.');
+    }
+
+    public function resume(Request $request, int $subscriptionProductUser): RedirectResponse
+    {
+        $row = SubscriptionProductUser::where('user_id', $request->user()?->getKey())
+            ->whereKey($subscriptionProductUser)
+            ->firstOrFail();
+
+        $stripeSubId = (string) ($row->stripe_subscription_id ?? '');
+        if ($stripeSubId === '') {
+            return back()->with('error', 'No Stripe subscription linked to this plan.');
+        }
+
+        $secret = trim((string) config('stripe-lri.stripe.secret', ''));
+        if ($secret === '') {
+            return back()->with('error', 'Stripe is not configured.');
+        }
+
+        try {
+            (new StripeClient($secret))->subscriptions->update($stripeSubId, [
+                'cancel_at_period_end' => false,
+            ]);
+
+            Subscription::where('stripe_subscription_id', $stripeSubId)
+                ->update(['cancel_at_period_end' => false]);
+        } catch (\Throwable $e) {
+            logger()->error('stripe-lri.resume_failed', ['error' => $e->getMessage()]);
+
+            return back()->with('error', 'Could not resume subscription: '.$e->getMessage());
+        }
+
+        return back()->with('success', 'Subscription resumed — it will renew as normal at the end of the current period.');
+    }
+
     public function pricingPlans(Request $request): Response
     {
         $user        = $request->user();
@@ -330,8 +395,19 @@ class WorkspaceBillingController extends Controller
                 });
         }
 
+        // Batch-fetch Subscription records so cancelScheduled reads real Stripe state
+        $stripeSubIds = $activeSubs->pluck('stripe_subscription_id')->filter()->unique()->values()->all();
+        $subscriptionMap = [];
+        if ($stripeSubIds !== []) {
+            Subscription::whereIn('stripe_subscription_id', $stripeSubIds)
+                ->get(['stripe_subscription_id', 'cancel_at_period_end', 'cancel_at'])
+                ->each(function (Subscription $sub) use (&$subscriptionMap): void {
+                    $subscriptionMap[(string) $sub->stripe_subscription_id] = $sub;
+                });
+        }
+
         $active = $activeSubs
-            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap))
+            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap, $subscriptionMap))
             ->values()
             ->all();
 
@@ -363,7 +439,7 @@ class WorkspaceBillingController extends Controller
     // ── Row builders ──────────────────────────────────────────────────────────
 
     /** @return array<string, mixed> */
-    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = []): array
+    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = [], array $subscriptionMap = []): array
     {
         $product   = $row->product;
         $price     = $product?->prices->first();
@@ -372,20 +448,23 @@ class WorkspaceBillingController extends Controller
         $latestInv = $invoiceMap[(int) ($row->subscription_product_id ?? 0)] ?? null;
         $paidAmount = $latestInv !== null ? (float) $latestInv->total_amount : $planPrice;
 
+        $stripeSub       = $subscriptionMap[(string) ($row->stripe_subscription_id ?? '')] ?? null;
+        $cancelScheduled = (bool) ($stripeSub?->cancel_at_period_end ?? false);
+
         return [
-            'id'             => (int) $row->getKey(),
-            'planName'       => (string) ($product?->plan_name ?? '—'),
-            'price'          => self::money($planPrice),
-            'paidAmount'     => self::money($paidAmount, (string) ($latestInv?->currency ?? 'usd')),
-            'credits'        => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
-            'siteCount'      => ($siteLimited && $hasSiteCount) ? (int) ($row->site_count ?? 0) : null,
-            'siteLimit'      => ($siteLimited && $hasSiteCount) ? (int) ($product?->getAttribute('site_limit') ?? 0) : null,
-            'period'         => self::accessPeriodLabel($row),
-            'status'         => 'Active',
-            'statusVariant'  => 'success',
-            'accessUntil'    => self::fmt($row->expires_at, 'Ongoing'),
-            'canCancel'      => in_array($planType, ['monthly', 'yearly'], true),
-            'cancelScheduled' => false,
+            'id'              => (int) $row->getKey(),
+            'planName'        => (string) ($product?->plan_name ?? '—'),
+            'price'           => self::money($planPrice),
+            'paidAmount'      => self::money($paidAmount, (string) ($latestInv?->currency ?? 'usd')),
+            'credits'         => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
+            'siteCount'       => ($siteLimited && $hasSiteCount) ? (int) ($row->site_count ?? 0) : null,
+            'siteLimit'       => ($siteLimited && $hasSiteCount) ? (int) ($product?->getAttribute('site_limit') ?? 0) : null,
+            'period'          => self::accessPeriodLabel($row),
+            'status'          => $cancelScheduled ? 'Canceling' : 'Active',
+            'statusVariant'   => $cancelScheduled ? 'warning' : 'success',
+            'accessUntil'     => self::fmt($row->expires_at, 'Ongoing'),
+            'canCancel'       => in_array($planType, ['monthly', 'yearly'], true),
+            'cancelScheduled' => $cancelScheduled,
         ];
     }
 
