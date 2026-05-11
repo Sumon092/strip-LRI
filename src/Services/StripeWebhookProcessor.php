@@ -288,20 +288,30 @@ class StripeWebhookProcessor
         $amountPaidCents = (int) ($invoice->amount_paid ?? $invoice->total ?? 0);
         $discountCents   = max(0, $subtotalCents - $amountPaidCents);
 
-        // Extract promo/coupon code from the discount object
+        // Extract promo/coupon code — check legacy invoice.discount and new invoice.discounts[] array
         $discountObj = $invoice->discount ?? null;
-        $promoCode   = null;
-        if ($discountObj !== null) {
-            // coupon id is often the human-readable code; fall back to coupon name
-            $promoCode = (string) ($discountObj->coupon?->id ?? $discountObj->coupon?->name ?? '');
-            if ($promoCode === '') {
-                $promoCode = null;
+        if ($discountObj === null) {
+            // Newer Stripe API surfaces discounts as an iterable list
+            $discountsList = $invoice->discounts ?? null;
+            if ($discountsList !== null) {
+                foreach ($discountsList as $d) {
+                    if ($d !== null) {
+                        $discountObj = $d;
+                        break;
+                    }
+                }
             }
+        }
+        $promoCode = null;
+        if ($discountObj !== null) {
+            $raw = (string) ($discountObj->coupon?->id ?? $discountObj->coupon?->name ?? '');
+            $promoCode = $raw !== '' ? $raw : null;
         }
 
         $currency        = strtolower((string) ($invoice->currency ?? 'usd'));
         $stripeInvoiceId = (string) ($invoice->id ?? '');
         $intentId        = (string) ($invoice->payment_intent ?? '');
+        $creditBased     = (bool) config('stripe-lri.credit_based');
         $now             = Carbon::now();
 
         // Support both old API (invoice.subscription) and new API (invoice.parent.subscription_details.subscription)
@@ -327,6 +337,7 @@ class StripeWebhookProcessor
                     'discount_amount'         => $discountCents / 100,
                     'total_amount'            => $amountPaidCents / 100,
                     'promo_code'              => $promoCode,
+                    'credits_purchased'       => ($creditBased && $product !== null) ? (int) ($product->getAttribute('credits_limit') ?? 0) : 0,
                     'currency'                => $currency,
                     'status'                  => 'paid',
                     'stripe_invoice_url'      => $invoice->hosted_invoice_url ?? null,

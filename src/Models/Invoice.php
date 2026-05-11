@@ -18,7 +18,7 @@ class Invoice extends Model
         'payment_intent_id', 'payment_charge_id',
         'customer_name', 'customer_email', 'billing_address',
         'amount', 'tax_amount', 'discount_amount', 'total_amount', 'currency',
-        'promo_code',
+        'promo_code', 'credits_purchased',
         'status', 'stripe_invoice_url', 'stripe_invoice_pdf', 'paid_at',
     ];
 
@@ -28,9 +28,10 @@ class Invoice extends Model
             'billing_address' => 'array',
             'amount'          => 'decimal:2',
             'tax_amount'      => 'decimal:2',
-            'discount_amount' => 'decimal:2',
-            'total_amount'    => 'decimal:2',
-            'paid_at'         => 'datetime',
+            'discount_amount'   => 'decimal:2',
+            'total_amount'      => 'decimal:2',
+            'credits_purchased' => 'integer',
+            'paid_at'           => 'datetime',
         ];
     }
 
