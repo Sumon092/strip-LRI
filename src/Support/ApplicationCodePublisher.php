@@ -321,6 +321,13 @@ PHP;
             'App\\Console\\Commands',
         );
         $this->files->put(app_path('Console/Commands/StripeLriSeed.php'), $seed);
+
+        // Publish the promo code back-fill command
+        $backfill = $this->transformPhpSource(
+            $this->files->get(dirname(__DIR__).'/Console/BackfillPromoCodesCommand.php'),
+            'App\\Console\\Commands',
+        );
+        $this->files->put(app_path('Console/Commands/StripeLriBackfillPromoCodes.php'), $backfill);
     }
 
     private function standaloneRoutesFileContents(): string
@@ -368,6 +375,12 @@ if (config('stripe-lri.register_routes', false)) {
             ->name('checkout.create');
         Route::post('/coupon/validate', [WorkspaceBillingController::class, 'validateCoupon'])
             ->name('coupon.validate');
+        Route::post('/subscription/{subscriptionProductUser}/cancel', [WorkspaceBillingController::class, 'cancel'])
+            ->whereNumber('subscriptionProductUser')
+            ->name('subscription.cancel');
+        Route::post('/subscription/{subscriptionProductUser}/resume', [WorkspaceBillingController::class, 'resume'])
+            ->whereNumber('subscriptionProductUser')
+            ->name('subscription.resume');
     });
 
     Route::middleware($adminMw)->prefix('admin')->name('admin.')->group(function (): void {
@@ -456,6 +469,7 @@ class StripeLriServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 \App\Console\Commands\StripeLriSeed::class,
+                \App\Console\Commands\StripeLriBackfillPromoCodes::class,
             ]);
 
             // Re-register the install command from vendor when the package is still present.
@@ -716,6 +730,20 @@ PHP;
             );
         }
 
+        // ── 3c. Inject cancel/resume routes after coupon.validate if missing ──
+        if (str_contains($content, "'coupon.validate'") && ! str_contains($content, "'subscription.cancel'")) {
+            $content = str_replace(
+                "Route::post('/coupon/validate', [WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');",
+                "Route::post('/coupon/validate', [WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');\n        Route::post('/subscription/{subscriptionProductUser}/cancel', [WorkspaceBillingController::class, 'cancel'])->whereNumber('subscriptionProductUser')->name('subscription.cancel');\n        Route::post('/subscription/{subscriptionProductUser}/resume', [WorkspaceBillingController::class, 'resume'])->whereNumber('subscriptionProductUser')->name('subscription.resume');",
+                $content,
+            );
+            $content = str_replace(
+                "Route::post('/coupon/validate', [\\App\\Http\\Controllers\\Workspace\\WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');",
+                "Route::post('/coupon/validate', [\\App\\Http\\Controllers\\Workspace\\WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');\n        Route::post('/subscription/{subscriptionProductUser}/cancel', [\\App\\Http\\Controllers\\Workspace\\WorkspaceBillingController::class, 'cancel'])->whereNumber('subscriptionProductUser')->name('subscription.cancel');\n        Route::post('/subscription/{subscriptionProductUser}/resume', [\\App\\Http\\Controllers\\Workspace\\WorkspaceBillingController::class, 'resume'])->whereNumber('subscriptionProductUser')->name('subscription.resume');",
+                $content,
+            );
+        }
+
         // ── 4. Add workspace billing routes if missing ─────────────────────────
         if (! str_contains($content, 'billing-history')) {
             $workspaceBlock = <<<'PHP'
@@ -728,6 +756,8 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
         Route::get('/subscription', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'subscription'])->name('subscription.index');
         Route::post('/checkout', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'checkout'])->name('checkout.create');
         Route::post('/coupon/validate', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'validateCoupon'])->name('coupon.validate');
+        Route::post('/subscription/{subscriptionProductUser}/cancel', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'cancel'])->whereNumber('subscriptionProductUser')->name('subscription.cancel');
+        Route::post('/subscription/{subscriptionProductUser}/resume', [\App\Http\Controllers\Workspace\WorkspaceBillingController::class, 'resume'])->whereNumber('subscriptionProductUser')->name('subscription.resume');
     } else {
         Route::get('/billing-history', [\App\Http\Controllers\WorkspaceController::class, 'billingHistory'])->name('billing-history.index');
         Route::get('/dashboard/pricing-plans', [\App\Http\Controllers\WorkspaceController::class, 'pricingPlans'])->name('pricing-plans.index');
