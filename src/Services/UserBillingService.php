@@ -14,7 +14,8 @@ use StripeLri\Models\SubscriptionProductUser;
  *
  * Usage:
  *   $billing = app(UserBillingService::class)->forUser($userId);
- *   $active  = app(UserBillingService::class)->activeSubscription($userId);
+ *   $all     = app(UserBillingService::class)->activeSubscriptions($userId);  // all active, oldest-first (FIFO)
+ *   $first   = app(UserBillingService::class)->activeSubscription($userId);   // oldest active, or null
  */
 class UserBillingService
 {
@@ -38,6 +39,7 @@ class UserBillingService
      *
      * @return array{
      *   subscriptions: list<array<string, mixed>>,
+     *   active: list<array<string, mixed>>,
      *   credits: int|null,
      *   site_count: int|null,
      *   site_limit: int|null,
@@ -51,13 +53,18 @@ class UserBillingService
             ->orderByDesc('created_at')
             ->get();
 
-        $activeRows = $rows->where('is_active', true);
+        // Active rows ordered oldest-first: ensures FIFO credit/site consumption
+        $activeRows = $rows->where('is_active', true)->sortBy('started_at')->values();
 
         $subscriptions = $rows->map(fn (SubscriptionProductUser $row): array => $this->toRow($row))
             ->values()
             ->all();
 
-        // Credits: sum across all active subscriptions
+        $active = $activeRows->map(fn (SubscriptionProductUser $row): array => $this->toRowWithFeatures($row))
+            ->values()
+            ->all();
+
+        // Credits: sum across all active subscriptions (oldest-first order)
         $credits = null;
         if ($this->hasCreditsBalance) {
             $credits = (int) $activeRows->sum(
@@ -65,7 +72,7 @@ class UserBillingService
             );
         }
 
-        // Sites: sum across all active subscriptions
+        // Sites: sum across all active subscriptions (oldest-first order)
         $siteCount = null;
         $siteLimit = null;
         if ($this->hasSiteCount) {
@@ -77,40 +84,39 @@ class UserBillingService
             );
         }
 
-        return compact('subscriptions', 'credits', 'siteCount', 'siteLimit');
+        return compact('subscriptions', 'active', 'credits', 'siteCount', 'siteLimit');
     }
 
     /**
-     * Convenience: first active subscription row, or null if the user has none.
-     * Includes credits / site fields when the features are enabled.
+     * All active subscriptions for a user, ordered oldest-started first (FIFO).
+     * Credits and site data are included per subscription when features are enabled.
+     * Use this when iterating subscriptions for credit/site deduction — consume
+     * the first entry before moving to subsequent ones.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function activeSubscriptions(int $userId): array
+    {
+        $rows = SubscriptionProductUser::query()
+            ->with('product.prices')
+            ->where('user_id', $userId)
+            ->where('is_active', true)
+            ->oldest('started_at')
+            ->get();
+
+        return $rows->map(fn (SubscriptionProductUser $row): array => $this->toRowWithFeatures($row))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Convenience: oldest active subscription (first to consume credits/sites), or null.
      *
      * @return array<string, mixed>|null
      */
     public function activeSubscription(int $userId): ?array
     {
-        $row = SubscriptionProductUser::query()
-            ->with('product.prices')
-            ->where('user_id', $userId)
-            ->where('is_active', true)
-            ->latest('started_at')
-            ->first();
-
-        if ($row === null) {
-            return null;
-        }
-
-        $data = $this->toRow($row);
-
-        if ($this->hasCreditsBalance) {
-            $data['credits'] = (int) ($row->credits_balance ?? 0);
-        }
-
-        if ($this->hasSiteCount) {
-            $data['site_count'] = (int) ($row->getAttribute('site_count') ?? 0);
-            $data['site_limit'] = (int) ($row->product?->getAttribute('site_limit') ?? 0);
-        }
-
-        return $data;
+        return $this->activeSubscriptions($userId)[0] ?? null;
     }
 
     /**
@@ -143,5 +149,22 @@ class UserBillingService
             'expires_at'             => $row->expires_at?->toIso8601String(),
             'stripe_subscription_id' => $row->stripe_subscription_id,
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function toRowWithFeatures(SubscriptionProductUser $row): array
+    {
+        $data = $this->toRow($row);
+
+        if ($this->hasCreditsBalance) {
+            $data['credits_balance'] = (int) ($row->credits_balance ?? 0);
+        }
+
+        if ($this->hasSiteCount) {
+            $data['site_count'] = (int) ($row->getAttribute('site_count') ?? 0);
+            $data['site_limit'] = (int) ($row->product?->getAttribute('site_limit') ?? 0);
+        }
+
+        return $data;
     }
 }
