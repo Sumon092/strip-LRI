@@ -169,6 +169,7 @@ class BillingUsersController extends Controller
     private function billingPayload(int $userId): array
     {
         $creditBased = (bool) config('stripe-lri.credit_based');
+        $siteLimited = (bool) config('stripe-lri.site_limit');
 
         /** @var class-string<Model> $spuClass */
         $spuClass = config('stripe-lri.models.subscription_product_user');
@@ -234,7 +235,21 @@ class BillingUsersController extends Controller
                 ])->all();
         }
 
-        return compact('subscriptionCount', 'creditPackages', 'creditSummary', 'recentPurchases', 'creditTransactions');
+        $siteSummary = null;
+        if ($siteLimited) {
+            $spusForSite = $creditBased
+                ? $spus
+                : $spuClass::with('product')
+                    ->where('user_id', $userId)
+                    ->where('is_active', true)
+                    ->get();
+            $siteSummary = [
+                'site_count' => (int) $spusForSite->sum(fn (Model $s): int => (int) ($s->getAttribute('site_count') ?? 0)),
+                'site_limit' => (int) $spusForSite->sum(fn (Model $s): int => (int) ($s->product?->getAttribute('site_limit') ?? 0)),
+            ];
+        }
+
+        return compact('subscriptionCount', 'creditPackages', 'creditSummary', 'recentPurchases', 'creditTransactions', 'siteSummary');
     }
 
     public function update(AdminUserUpdateRequest $request, int $user): RedirectResponse
