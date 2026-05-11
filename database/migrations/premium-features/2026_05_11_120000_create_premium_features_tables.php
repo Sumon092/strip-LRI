@@ -26,12 +26,20 @@ return new class extends Migration
 
         Schema::create('subscription_product_premium_feature', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('subscription_product_id')->constrained('subscription_products')->cascadeOnDelete();
-            $table->foreignId('premium_feature_id')->constrained('premium_features')->cascadeOnDelete();
+            $table->unsignedBigInteger('subscription_product_id');
+            $table->unsignedBigInteger('premium_feature_id');
             $table->boolean('is_included')->default(false);
             $table->timestamps();
 
             $table->unique(['subscription_product_id', 'premium_feature_id'], 'sppf_product_feature_uidx');
+
+            // Short names: Laravel’s default FK names exceed MySQL’s 64-byte identifier limit.
+            $table->foreign('subscription_product_id', 'sppf_spid_fk')
+                ->references('id')->on('subscription_products')
+                ->cascadeOnDelete();
+            $table->foreign('premium_feature_id', 'sppf_pfid_fk')
+                ->references('id')->on('premium_features')
+                ->cascadeOnDelete();
         });
 
         for ($i = 1; $i <= 5; $i++) {
