@@ -460,7 +460,11 @@ class BillingLedgerController extends Controller
         bool $isCanceled,
     ): ?string {
         if ($cancelPeriodEnd && ! $isCanceled) {
-            return 'Scheduled to cancel at period end';
+            $detail = self::cancelReasonText($sub);
+
+            return $detail !== null
+                ? 'Scheduled to cancel at period end — '.$detail
+                : 'Scheduled to cancel at period end';
         }
         if ($isCanceled && $sub !== null) {
             $details = $sub->cancellation_details;
@@ -482,13 +486,27 @@ class BillingLedgerController extends Controller
         $comment  = trim((string) ($details['comment'] ?? ''));
         $feedback = (string) ($details['feedback'] ?? '');
         $reason   = (string) ($details['reason'] ?? '');
-        $parts    = array_filter([
+        $reasonLabel = self::stripeCancellationReasonLabel($reason);
+        $parts       = array_filter([
             $feedback !== '' ? ucwords(str_replace('_', ' ', $feedback)) : null,
             $comment !== '' ? '"'.$comment.'"' : null,
-            $reason !== '' && $reason !== 'cancellation_requested' ? '('.ucwords(str_replace('_', ' ', $reason)).')' : null,
+            $reasonLabel,
         ]);
         $text = implode(' — ', $parts);
+
         return $text !== '' ? $text : null;
+    }
+
+    private static function stripeCancellationReasonLabel(string $reason): ?string
+    {
+        if ($reason === '') {
+            return null;
+        }
+
+        return match ($reason) {
+            'cancellation_requested' => 'Customer requested cancellation',
+            default => '('.ucwords(str_replace('_', ' ', $reason)).')',
+        };
     }
 
     private static function productPrice(SubscriptionProductUser $row): string

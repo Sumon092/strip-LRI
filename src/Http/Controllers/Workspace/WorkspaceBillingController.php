@@ -224,6 +224,7 @@ class WorkspaceBillingController extends Controller
             if ($periodEnd !== null) {
                 $cancelSubAttrs['current_period_end'] = $periodEnd;
             }
+            $cancelSubAttrs['cancellation_details'] = Subscription::extractCancellationDetailsFromApi($stripeSub);
             Subscription::updateOrCreate(
                 ['stripe_subscription_id' => $stripeSubId],
                 $cancelSubAttrs,
@@ -279,6 +280,7 @@ class WorkspaceBillingController extends Controller
             if ($periodEnd !== null) {
                 $resumeSubAttrs['current_period_end'] = $periodEnd;
             }
+            $resumeSubAttrs['cancellation_details'] = Subscription::extractCancellationDetailsFromApi($stripeSub);
             Subscription::updateOrCreate(
                 ['stripe_subscription_id' => $stripeSubId],
                 $resumeSubAttrs,

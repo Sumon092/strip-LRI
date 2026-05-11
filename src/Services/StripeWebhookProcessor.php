@@ -81,6 +81,7 @@ class StripeWebhookProcessor
                 'cancel_at'               => isset($sub->cancel_at) ? Carbon::createFromTimestamp((int) $sub->cancel_at) : null,
                 'current_period_end'      => $periodEnd,
                 'canceled_at'             => isset($sub->canceled_at) ? Carbon::createFromTimestamp((int) $sub->canceled_at) : null,
+                'cancellation_details'  => Subscription::extractCancellationDetailsFromApi($sub),
                 'created_time'            => isset($sub->created) ? Carbon::createFromTimestamp((int) $sub->created) : $now,
                 'start_date'              => isset($sub->start_date) ? Carbon::createFromTimestamp((int) $sub->start_date) : $now,
                 'quantity'                => (int) ($firstItem?->quantity ?? 1),
@@ -398,10 +399,11 @@ class StripeWebhookProcessor
         $isActive = in_array((string) ($sub->status ?? ''), ['active', 'trialing'], true);
 
         $subscriptionPatch = [
-            'status'               => (string) ($sub->status ?? 'active'),
-            'cancel_at_period_end' => (bool) ($sub->cancel_at_period_end ?? false),
-            'cancel_at'            => isset($sub->cancel_at) ? Carbon::createFromTimestamp((int) $sub->cancel_at) : null,
-            'canceled_at'          => isset($sub->canceled_at) ? Carbon::createFromTimestamp((int) $sub->canceled_at) : null,
+            'status'                  => (string) ($sub->status ?? 'active'),
+            'cancel_at_period_end'    => (bool) ($sub->cancel_at_period_end ?? false),
+            'cancel_at'               => isset($sub->cancel_at) ? Carbon::createFromTimestamp((int) $sub->cancel_at) : null,
+            'canceled_at'             => isset($sub->canceled_at) ? Carbon::createFromTimestamp((int) $sub->canceled_at) : null,
+            'cancellation_details'  => Subscription::extractCancellationDetailsFromApi($sub),
         ];
         if ($periodEnd !== null) {
             $subscriptionPatch['current_period_end'] = $periodEnd;
@@ -422,10 +424,15 @@ class StripeWebhookProcessor
             return;
         }
 
-        Subscription::where('stripe_subscription_id', $stripeSubId)->update([
+        $deletedPatch = [
             'status'   => 'canceled',
             'ended_at' => Carbon::now(),
-        ]);
+        ];
+        $deletedDetails = Subscription::extractCancellationDetailsFromApi($sub);
+        if ($deletedDetails !== null) {
+            $deletedPatch['cancellation_details'] = $deletedDetails;
+        }
+        Subscription::where('stripe_subscription_id', $stripeSubId)->update($deletedPatch);
 
         SubscriptionProductUser::where('stripe_subscription_id', $stripeSubId)->update([
             'is_active'  => false,

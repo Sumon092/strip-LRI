@@ -52,4 +52,46 @@ class Subscription extends Model
     {
         return $this->hasMany(SubscriptionItem::class, 'subscription_id');
     }
+
+    /**
+     * Normalize Stripe {@code cancellation_details} (object or array) for JSON storage.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function normalizeCancellationDetails(mixed $cancellationDetails): ?array
+    {
+        if ($cancellationDetails === null) {
+            return null;
+        }
+        if (is_array($cancellationDetails)) {
+            return $cancellationDetails === [] ? null : $cancellationDetails;
+        }
+        if (is_object($cancellationDetails)) {
+            $decoded = json_decode(json_encode($cancellationDetails), true);
+            if (! is_array($decoded) || $decoded === []) {
+                return null;
+            }
+
+            return $decoded;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  object|array<string, mixed>  $subscription  Stripe Subscription API object (or decoded array)
+     * @return array<string, mixed>|null
+     */
+    public static function extractCancellationDetailsFromApi(mixed $subscription): ?array
+    {
+        if (is_array($subscription)) {
+            $cd = $subscription['cancellation_details'] ?? null;
+        } elseif (is_object($subscription)) {
+            $cd = $subscription->cancellation_details ?? null;
+        } else {
+            return null;
+        }
+
+        return self::normalizeCancellationDetails($cd);
+    }
 }
