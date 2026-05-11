@@ -198,6 +198,8 @@ class BillingLedgerController extends Controller
                     $subStatusVariant = 'success';
                 }
 
+                $cancelReasonDisplay = self::subscriptionCancelReasonDisplay($sub, $cancelPeriodEnd, $isCanceled);
+
                 return [
                     'id'                       => (int) $row->getKey(),
                     'number'                   => 'SUB-'.str_pad((string) $row->getKey(), 6, '0', STR_PAD_LEFT),
@@ -219,9 +221,12 @@ class BillingLedgerController extends Controller
                     'subscriptionStatusVariant' => $subStatusVariant,
                     'subscriptionScheduleLine' => self::scheduleLine($row, $sub, $cancelPeriodEnd, $isCanceled),
                     'subscriptionScheduleSub'  => self::scheduleSubLine($row, $sub, $cancelPeriodEnd, $isCanceled),
-                    'cancelReasonDetail'       => self::cancelReasonText($sub),
-                    'canViewCancelReason'      => $sub !== null && self::cancelReasonText($sub) !== null,
-                    'cancellationReason'       => self::cancelReasonText($sub),
+                    'cancelReasonDetail'       => $cancelReasonDisplay,
+                    'cancellationReason'       => $cancelReasonDisplay,
+                    'cancelReason'             => $cancelReasonDisplay,
+                    'cancel_reason'            => $cancelReasonDisplay,
+                    'cancellation_reason'      => $cancelReasonDisplay,
+                    'canViewCancelReason'      => $cancelReasonDisplay !== null,
                     'userId'                   => $row->user_id,
                     'userRole'                 => $row->user?->getAttribute('role') ?? null,
                     'userIsActive'             => (bool) ($row->user?->getAttribute('is_active') ?? false),
@@ -471,6 +476,27 @@ class BillingLedgerController extends Controller
             $feedback = is_array($details) ? (string) ($details['feedback'] ?? '') : '';
             return $feedback !== '' ? ucwords(str_replace('_', ' ', $feedback)) : null;
         }
+        return null;
+    }
+
+    /**
+     * Text for the “Cancel reason” table column: Stripe details when present, otherwise a clear fallback for canceling/canceled rows.
+     */
+    private static function subscriptionCancelReasonDisplay(?Subscription $sub, bool $cancelPeriodEnd, bool $isCanceled): ?string
+    {
+        $fromStripe = self::cancelReasonText($sub);
+        if ($fromStripe !== null) {
+            return $fromStripe;
+        }
+        if ($sub !== null && $cancelPeriodEnd && ! $isCanceled) {
+            return 'Scheduled at period end — Stripe did not include customer feedback.';
+        }
+        if ($isCanceled) {
+            return $sub !== null
+                ? 'Canceled — no cancellation details on file.'
+                : 'Canceled — subscription not linked to a synced Stripe record.';
+        }
+
         return null;
     }
 
