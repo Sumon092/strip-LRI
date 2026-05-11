@@ -1,9 +1,10 @@
 <?php
 
-namespace App\Support\Billing;
+namespace StripeLri\Support;
 
 use Illuminate\Support\Facades\Schema;
-use App\Models\Billing\Package;
+use StripeLri\Models\Package;
+use StripeLri\Models\PremiumFeature;
 
 /**
  * Maps Eloquent {@see Package} rows to admin Inertia list/form shapes (no demo catalog).
@@ -15,7 +16,7 @@ final class PackagePresenter
      */
     public static function emptyForm(): array
     {
-        return [
+        $base = [
             'name'             => '',
             'stripe_product_id' => '',
             'package_type'     => 'stripe_plan',
@@ -35,6 +36,12 @@ final class PackagePresenter
                 ],
             ],
         ];
+
+        if (self::premiumFeaturesEnabled()) {
+            $base['premium_features'] = self::premiumFeaturesStateForForm(null);
+        }
+
+        return $base;
     }
 
     /**
@@ -66,7 +73,7 @@ final class PackagePresenter
             $status = 'active';
         }
 
-        return [
+        $row = [
             'id'               => (int) $p->getKey(),
             'stripe_product_id' => (string) ($p->stripe_product_id ?? ''),
             'name'             => (string) $p->plan_name,
@@ -88,6 +95,18 @@ final class PackagePresenter
             'created_at'       => $p->created_at?->toIso8601String(),
             'updated_at'       => $p->updated_at?->toIso8601String(),
         ];
+
+        if (self::premiumFeaturesEnabled() && $p->relationLoaded('premiumFeatures')) {
+            $total = $p->premiumFeatures->count();
+            $included = $p->premiumFeatures->filter(
+                static fn (PremiumFeature $pf): bool => (bool) ($pf->pivot->is_included ?? false),
+            )->count();
+            $row['premium_features_summary'] = $total > 0 ? "{$included}/{$total}" : '—';
+        } else {
+            $row['premium_features_summary'] = null;
+        }
+
+        return $row;
     }
 
     /**
@@ -114,7 +133,7 @@ final class PackagePresenter
             $status = 'active';
         }
 
-        return [
+        $form = [
             'name'             => (string) $p->plan_name,
             'stripe_product_id' => (string) ($p->stripe_product_id ?? ''),
             'package_type'     => (string) ($meta['package_type'] ?? $p->plan_type ?? 'stripe_plan'),
@@ -127,6 +146,12 @@ final class PackagePresenter
             'items'            => self::normalizeItemsForForm($items),
             'prices'           => self::normalizePricesForForm($prices),
         ];
+
+        if (self::premiumFeaturesEnabled()) {
+            $form['premium_features'] = self::premiumFeaturesStateForForm($p);
+        }
+
+        return $form;
     }
 
     /**
@@ -222,6 +247,66 @@ final class PackagePresenter
                 'metadata' => $meta,
             ]);
         }
+
+        if (! self::premiumFeaturesEnabled() || ! Schema::hasTable('subscription_product_premium_feature')) {
+            return;
+        }
+
+        $premiumRows = $validated['premium_features'] ?? null;
+        if (! is_array($premiumRows)) {
+            return;
+        }
+
+        $sync = [];
+        foreach ($premiumRows as $row) {
+            if (! is_array($row) || ! isset($row['id'])) {
+                continue;
+            }
+            $id = (int) $row['id'];
+            if ($id < 1) {
+                continue;
+            }
+            $sync[$id] = ['is_included' => (bool) ($row['included'] ?? false)];
+        }
+
+        $package->premiumFeatures()->sync($sync);
+    }
+
+    private static function premiumFeaturesEnabled(): bool
+    {
+        return (bool) config('stripe-lri.premium_features')
+            && Schema::hasTable('premium_features');
+    }
+
+    /**
+     * @return list<array{id: int, name: string, included: bool}>
+     */
+    private static function premiumFeaturesStateForForm(?Package $package): array
+    {
+        if (! self::premiumFeaturesEnabled()) {
+            return [];
+        }
+
+        $catalog = PremiumFeature::query()->orderBy('sort_order')->orderBy('id')->get();
+
+        $byId = collect();
+        if ($package !== null && $package->exists) {
+            $package->loadMissing('premiumFeatures');
+            $byId = $package->premiumFeatures->keyBy(static fn (PremiumFeature $pf): int => (int) $pf->getKey());
+        }
+
+        $out = [];
+        foreach ($catalog as $f) {
+            $pivot = $byId->get($f->getKey());
+
+            $out[] = [
+                'id' => (int) $f->getKey(),
+                'name' => (string) $f->name,
+                'included' => (bool) ($pivot?->pivot?->is_included ?? false),
+            ];
+        }
+
+        return $out;
     }
 
     /**

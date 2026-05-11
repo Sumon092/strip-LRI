@@ -29,6 +29,7 @@ final class ApplicationCodePublisher
         bool $force,
         bool $includeCreditMigrations,
         bool $includeSiteLimitMigrations = false,
+        bool $includePremiumFeatureMigrations = false,
         ?OutputInterface $output = null,
     ): array {
         $lines = [];
@@ -73,6 +74,11 @@ final class ApplicationCodePublisher
         if ($includeSiteLimitMigrations) {
             $this->copyMigrationDirectory($packageRoot.'/database/migrations/site-limit', $migDest, $force, $output);
             $lines[] = 'Published site-limit migrations to database/migrations.';
+        }
+
+        if ($includePremiumFeatureMigrations) {
+            $this->copyMigrationDirectory($packageRoot.'/database/migrations/premium-features', $migDest, $force, $output);
+            $lines[] = 'Published premium-features migrations to database/migrations.';
         }
 
         return $lines;

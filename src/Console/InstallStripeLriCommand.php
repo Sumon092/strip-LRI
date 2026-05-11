@@ -18,6 +18,8 @@ class InstallStripeLriCommand extends Command
                             {--no-credit-based : Mark app as not credit-based (non-interactive)}
                             {--site-limit : Mark app as site-limit based (non-interactive)}
                             {--no-site-limit : Mark app as not site-limit based (non-interactive)}
+                            {--premium-features : Install premium-features schema (non-interactive)}
+                            {--no-premium-features : Skip premium-features schema (non-interactive)}
                             {--skip-app-publish : Keep controllers/migrations in vendor only (no app/StripeLri copy)}';
 
     protected $description = 'Publish config, copy workable PHP + migrations into the host app, set .env, and run migrations unless skipped.';
@@ -57,8 +59,23 @@ class InstallStripeLriCommand extends Command
             $siteLimited = $this->confirm('Is this application site-limit based? (Sites/domains per subscription, etc.)', false);
         }
 
+        if ($this->option('premium-features') && $this->option('no-premium-features')) {
+            $this->components->error('Use only one of --premium-features or --no-premium-features.');
+
+            return self::FAILURE;
+        }
+
+        if ($this->option('premium-features')) {
+            $premiumFeatures = true;
+        } elseif ($this->option('no-premium-features')) {
+            $premiumFeatures = false;
+        } else {
+            $premiumFeatures = $this->confirm('Include premium features? (Adds premium_features catalog + per-package inclusion toggles)', false);
+        }
+
         $this->writeEnvBool('STRIPE_LRI_CREDIT_BASED', $creditBased);
         $this->writeEnvBool('STRIPE_LRI_SITE_LIMIT', $siteLimited);
+        $this->writeEnvBool('STRIPE_LRI_PREMIUM_FEATURES', $premiumFeatures);
         $this->writeEnvBool('STRIPE_LRI_REGISTER_ROUTES', true);
         $this->writeEnvBool('STRIPE_LRI_REGISTER_WEBHOOK', true);
 
@@ -69,7 +86,7 @@ class InstallStripeLriCommand extends Command
             $this->newLine();
             $this->components->info('Publishing Stripe-LRI into your application (app/Http, app/Models, migrations, routes/stripe-lri.php, app/Providers/StripeLriServiceProvider.php)...');
             $publisher = new ApplicationCodePublisher;
-            foreach ($publisher->publishAll((bool) $this->option('force'), $creditBased, $siteLimited, $this->output) as $line) {
+            foreach ($publisher->publishAll((bool) $this->option('force'), $creditBased, $siteLimited, $premiumFeatures, $this->output) as $line) {
                 $this->line(' • '.$line);
             }
 
@@ -110,6 +127,7 @@ class InstallStripeLriCommand extends Command
         $this->components->info('Stripe-LRI configured.');
         $this->line(' • STRIPE_LRI_CREDIT_BASED='.($creditBased ? 'true' : 'false'));
         $this->line(' • STRIPE_LRI_SITE_LIMIT='.($siteLimited ? 'true' : 'false'));
+        $this->line(' • STRIPE_LRI_PREMIUM_FEATURES='.($premiumFeatures ? 'true' : 'false'));
         $this->line(' • STRIPE_LRI_PUBLISHED_TO_APP='.($skipPublish ? 'false' : 'true'));
         $this->line(' • STRIPE_LRI_REGISTER_ROUTES=true (set false in .env if your app already defines the same URLs)');
         $this->line(' • STRIPE_LRI_REGISTER_WEBHOOK=true — POST /stripe/webhook (mandatory for production billing; set STRIPE_WEBHOOK_SECRET before going live)');
@@ -122,6 +140,9 @@ class InstallStripeLriCommand extends Command
             }
             if (! $siteLimited) {
                 $this->line(' • Later, to add site-limit migrations: php artisan stripe-lri:install --site-limit --force');
+            }
+            if (! $premiumFeatures) {
+                $this->line(' • Later, to add premium-features migrations: php artisan stripe-lri:install --premium-features --force');
             }
         }
         $this->newLine();

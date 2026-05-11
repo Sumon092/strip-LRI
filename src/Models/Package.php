@@ -3,6 +3,7 @@
 namespace StripeLri\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -69,5 +70,19 @@ class Package extends Model
     public function prices(): HasMany
     {
         return $this->hasMany(SubscriptionProductPrice::class, 'subscription_product_id');
+    }
+
+    /**
+     * @return BelongsToMany<PremiumFeature, $this>
+     */
+    public function premiumFeatures(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            PremiumFeature::class,
+            'subscription_product_premium_feature',
+            'subscription_product_id',
+            'premium_feature_id',
+        )->withPivot('is_included')
+            ->withTimestamps();
     }
 }

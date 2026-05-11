@@ -54,6 +54,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Premium features (catalog + per-package inclusion)
+    |--------------------------------------------------------------------------
+    |
+    | Set via `php artisan stripe-lri:install` or STRIPE_LRI_PREMIUM_FEATURES.
+    | When true: optional migrations add `premium_features` (five default rows)
+    | and `subscription_product_premium_feature`; admin package forms show toggles.
+    |
+    */
+    'premium_features' => (bool) env('STRIPE_LRI_PREMIUM_FEATURES', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application code published into the host app
     |--------------------------------------------------------------------------
     |

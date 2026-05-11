@@ -3,8 +3,10 @@
 namespace StripeLri\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use StripeLri\Models\PremiumFeature;
 use StripeLri\Support\StripeWebhookCatalogGate;
 
 class StorePackageRequest extends FormRequest
@@ -29,7 +31,7 @@ class StorePackageRequest extends FormRequest
             ? ['required', 'integer', 'min:0']
             : ['nullable', 'integer', 'min:0'];
 
-        return [
+        $rules = [
             'name' => ['required', 'string', 'max:255'],
             'package_type' => ['required', 'string', Rule::in(['stripe_plan', 'free', 'appsumo', 'custom'])],
             'credit_limit' => $creditRules,
@@ -51,6 +53,17 @@ class StorePackageRequest extends FormRequest
             'prices.*.nickname' => ['nullable', 'string', 'max:255'],
             'prices.*.yearly_discount_percent' => ['nullable', 'integer', 'min:0', 'max:100'],
         ];
+
+        if (config('stripe-lri.premium_features') && Schema::hasTable('premium_features')) {
+            $n = PremiumFeature::query()->count();
+            if ($n > 0) {
+                $rules['premium_features'] = ['required', 'array', 'size:'.$n];
+                $rules['premium_features.*.id'] = ['required', 'integer', Rule::exists('premium_features', 'id')];
+                $rules['premium_features.*.included'] = ['required', 'boolean'];
+            }
+        }
+
+        return $rules;
     }
 
     protected function prepareForValidation(): void
@@ -65,6 +78,15 @@ class StorePackageRequest extends FormRequest
             'is_popular'  => (bool) $this->input('is_popular', false),
             'is_featured' => (bool) $this->input('is_featured', false),
         ]);
+
+        if (config('stripe-lri.premium_features') && Schema::hasTable('premium_features') && ! $this->has('premium_features')) {
+            $this->merge([
+                'premium_features' => PremiumFeature::query()->orderBy('sort_order')->orderBy('id')->get()->map(static fn (PremiumFeature $f): array => [
+                    'id' => (int) $f->getKey(),
+                    'included' => false,
+                ])->all(),
+            ]);
+        }
     }
 
     public function withValidator(Validator $validator): void

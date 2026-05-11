@@ -23,12 +23,16 @@ class BillingPackagesController extends Controller
             $perPage = 10;
         }
 
-        $paginator = Package::query()
+        $query = Package::query()
             ->with(['items', 'prices'])
             ->orderBy('sort_order')
-            ->orderByDesc('id')
-            ->paginate($perPage)
-            ->withQueryString();
+            ->orderByDesc('id');
+
+        if (config('stripe-lri.premium_features')) {
+            $query->with('premiumFeatures');
+        }
+
+        $paginator = $query->paginate($perPage)->withQueryString();
 
         $paginator->setCollection(
             $paginator->getCollection()->map(
@@ -41,6 +45,7 @@ class BillingPackagesController extends Controller
         return Inertia::render('Admin/Packages/Index', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
             'siteLimited' => (bool) config('stripe-lri.site_limit'),
+            'premiumFeaturesEnabled' => (bool) config('stripe-lri.premium_features'),
             'canCreatePackages' => $canCreatePackages,
             'packagesCreateBlockReason' => $canCreatePackages ? null : StripeWebhookCatalogGate::denyMessage(),
             'products' => $paginator,
@@ -58,20 +63,27 @@ class BillingPackagesController extends Controller
         return Inertia::render('Admin/Packages/Create', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
             'siteLimited' => (bool) config('stripe-lri.site_limit'),
+            'premiumFeaturesEnabled' => (bool) config('stripe-lri.premium_features'),
             'form' => PackagePresenter::emptyForm(),
         ]);
     }
 
     public function edit(int $package): Response
     {
+        $with = ['items', 'prices'];
+        if (config('stripe-lri.premium_features')) {
+            $with[] = 'premiumFeatures';
+        }
+
         $model = Package::query()
-            ->with(['items', 'prices'])
+            ->with($with)
             ->whereKey($package)
             ->firstOrFail();
 
         return Inertia::render('Admin/Packages/Edit', [
             'creditBased' => (bool) config('stripe-lri.credit_based'),
             'siteLimited' => (bool) config('stripe-lri.site_limit'),
+            'premiumFeaturesEnabled' => (bool) config('stripe-lri.premium_features'),
             'productId' => (int) $model->getKey(),
             'form' => PackagePresenter::toForm($model),
         ]);
