@@ -288,25 +288,7 @@ class StripeWebhookProcessor
         $amountPaidCents = (int) ($invoice->amount_paid ?? $invoice->total ?? 0);
         $discountCents   = max(0, $subtotalCents - $amountPaidCents);
 
-        // Extract promo/coupon code — check legacy invoice.discount and new invoice.discounts[] array
-        $discountObj = $invoice->discount ?? null;
-        if ($discountObj === null) {
-            // Newer Stripe API surfaces discounts as an iterable list
-            $discountsList = $invoice->discounts ?? null;
-            if ($discountsList !== null) {
-                foreach ($discountsList as $d) {
-                    if ($d !== null) {
-                        $discountObj = $d;
-                        break;
-                    }
-                }
-            }
-        }
-        $promoCode = null;
-        if ($discountObj !== null) {
-            $raw = (string) ($discountObj->coupon?->id ?? $discountObj->coupon?->name ?? '');
-            $promoCode = $raw !== '' ? $raw : null;
-        }
+        $promoCode = $this->extractPromoCode($invoice);
 
         $currency        = strtolower((string) ($invoice->currency ?? 'usd'));
         $stripeInvoiceId = (string) ($invoice->id ?? '');
@@ -345,6 +327,11 @@ class StripeWebhookProcessor
                     'paid_at'                 => $now,
                 ],
             );
+
+            // If invoice already existed but had no promo_code and we resolved one now, patch it
+            if (! $localInvoice->wasRecentlyCreated && $localInvoice->promo_code === null && $promoCode !== null) {
+                $localInvoice->update(['promo_code' => $promoCode]);
+            }
 
             // Back-fill product on the Payment row created by charge.succeeded
             if ($product !== null && $intentId !== '') {
@@ -516,6 +503,74 @@ class StripeWebhookProcessor
         } catch (\Throwable) {
             return '';
         }
+    }
+
+    /**
+     * Extracts the promo/coupon code from a Stripe invoice object.
+     *
+     * Handles three structural variants:
+     *  - Legacy: invoice.discount is a Discount object with coupon.id
+     *  - New API (2024+): invoice.discounts[] contains Discount objects
+     *  - Webhook payload: invoice.discounts[] items are plain string IDs ("di_xxx") — fetches
+     *    the expanded invoice from Stripe to resolve the coupon.
+     */
+    private function extractPromoCode(object $invoice): ?string
+    {
+        // Legacy: invoice.discount is a Discount object
+        $discountObj = $invoice->discount ?? null;
+
+        // Newer API: invoice.discounts[] array (objects or string IDs)
+        if ($discountObj === null) {
+            foreach ($invoice->discounts ?? [] as $d) {
+                if ($d !== null) {
+                    $discountObj = $d;
+                    break;
+                }
+            }
+        }
+
+        // Webhook payloads send discount IDs as plain strings ("di_xxx") rather than expanded objects.
+        // Fetch the invoice from Stripe with discounts expanded to resolve the coupon.
+        if (is_string($discountObj) && $discountObj !== '') {
+            $stripeInvoiceId = (string) ($invoice->id ?? '');
+            $secret          = trim((string) config('stripe-lri.stripe.secret', ''));
+            if ($stripeInvoiceId === '' || $secret === '') {
+                return null;
+            }
+            try {
+                $expanded    = (new StripeClient($secret))->invoices->retrieve(
+                    $stripeInvoiceId,
+                    ['expand' => ['discounts']],
+                );
+                $discountObj = null;
+                foreach ($expanded->discounts ?? [] as $d) {
+                    if ($d !== null && ! is_string($d)) {
+                        $discountObj = $d;
+                        break;
+                    }
+                }
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        if ($discountObj === null || is_string($discountObj)) {
+            return null;
+        }
+
+        // Coupon may be an expanded object, a string ID reference, or exposed as coupon_id
+        $coupon = $discountObj->coupon ?? null;
+        if (is_object($coupon)) {
+            $raw = (string) ($coupon->id ?? $coupon->name ?? '');
+
+            return $raw !== '' ? $raw : null;
+        }
+        if (is_string($coupon) && $coupon !== '') {
+            return $coupon;
+        }
+        $couponId = (string) ($discountObj->coupon_id ?? '');
+
+        return $couponId !== '' ? $couponId : null;
     }
 
     private function createLocalInvoice(

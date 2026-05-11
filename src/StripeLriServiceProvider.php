@@ -5,6 +5,7 @@ namespace StripeLri;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 use StripeLri\Console\AddMonthlyCreditsForYearlyCommand;
+use StripeLri\Console\BackfillPromoCodesCommand;
 use StripeLri\Console\InstallStripeLriCommand;
 use StripeLri\Console\ProcessCreditsHistoryCommand;
 use StripeLri\Contracts\CreditLedger;
@@ -55,7 +56,10 @@ class StripeLriServiceProvider extends ServiceProvider
         ], 'stripe-lri-config');
 
         if ($this->app->runningInConsole()) {
-            $this->commands([InstallStripeLriCommand::class]);
+            $this->commands([
+                InstallStripeLriCommand::class,
+                BackfillPromoCodesCommand::class,
+            ]);
         }
 
         if ($this->hostBillingIsStandalone()) {
