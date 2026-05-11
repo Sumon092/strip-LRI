@@ -1,9 +1,9 @@
 <?php
 
-namespace StripeLri\Support;
+namespace App\Support\Billing;
 
 use Illuminate\Support\Facades\Schema;
-use StripeLri\Models\Package;
+use App\Models\Billing\Package;
 
 /**
  * Maps Eloquent {@see Package} rows to admin Inertia list/form shapes (no demo catalog).
@@ -81,6 +81,8 @@ final class PackagePresenter
             'description'      => (string) ($p->description ?? ''),
             'active'           => $status === 'active',
             'total_prices'     => max(1, count($prices)),
+            /** Human-readable amounts for the admin list (not the price-tier count). */
+            'price_summary'    => self::formatIndexPriceSummary($p, $prices),
             'total_items'      => max(1, count($namedItems) > 0 ? count($namedItems) : 1),
             'last_synced_at'   => $p->updated_at?->toIso8601String(),
             'created_at'       => $p->created_at?->toIso8601String(),
@@ -401,5 +403,64 @@ final class PackagePresenter
                 'nickname' => '',
             ],
         ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $prices
+     */
+    private static function formatIndexPriceSummary(Package $p, array $prices): string
+    {
+        if ($prices === []) {
+            return '—';
+        }
+
+        $parts = [];
+        foreach ($prices as $i => $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $amount = (float) ($row['amount'] ?? 0);
+            $planType = (string) ($row['plan_type'] ?? '');
+            $currency = 'usd';
+            if ($p->relationLoaded('prices') && isset($p->prices[$i])) {
+                $currency = strtolower((string) ($p->prices[$i]->currency ?: 'usd'));
+            }
+            $parts[] = self::formatMoneyForLocale($amount, $currency).self::indexPlanSuffix($planType);
+        }
+
+        return $parts !== [] ? implode(', ', $parts) : '—';
+    }
+
+    private static function indexPlanSuffix(string $planType): string
+    {
+        return match ($planType) {
+            'monthly' => '/mo',
+            'yearly' => '/yr',
+            'lifetime' => ' once',
+            default => '',
+        };
+    }
+
+    private static function formatMoneyForLocale(float $amount, string $currency): string
+    {
+        $currency = strtolower($currency) !== '' ? strtolower($currency) : 'usd';
+
+        if (class_exists(\NumberFormatter::class)) {
+            $locale = class_exists(\Locale::class) ? \Locale::getDefault() : 'en_US';
+            $fmt = new \NumberFormatter($locale, \NumberFormatter::CURRENCY);
+            $out = $fmt->formatCurrency($amount, strtoupper($currency));
+            if (is_string($out) && $out !== '') {
+                return $out;
+            }
+        }
+
+        $sym = match ($currency) {
+            'usd' => '$',
+            'eur' => '€',
+            'gbp' => '£',
+            default => strtoupper($currency).' ',
+        };
+
+        return $sym.number_format($amount, 2, '.', ',');
     }
 }

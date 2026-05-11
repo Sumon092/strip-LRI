@@ -76,9 +76,9 @@ class BillingLedgerController extends Controller
                 'customerEmail' => (string) ($inv->customer_email ?? $inv->user?->email ?? '—'),
                 'planName'      => (string) ($inv->product?->plan_name ?? '—'),
                 'planPrice'     => self::money((float) $inv->amount, (string) ($inv->currency ?? 'usd')),
-                'discount'      => self::money(max(0.0, (float) $inv->amount - (float) $inv->total_amount), (string) ($inv->currency ?? 'usd')),
+                'discount'      => self::money((float) ($inv->discount_amount ?? 0), (string) ($inv->currency ?? 'usd')),
                 'amountPaid'    => self::money((float) $inv->total_amount, (string) ($inv->currency ?? 'usd')),
-                'promoCode'     => null,
+                'promoCode'     => $inv->promo_code ?? null,
                 'status'        => ucfirst((string) $inv->status),
                 'statusVariant' => self::invoiceVariant((string) $inv->status),
                 'period'        => self::fmt($inv->created_at),
@@ -145,35 +145,60 @@ class BillingLedgerController extends Controller
 
         $paginator = $query->paginate($perPage)->withQueryString();
 
+        // Build a lookup of latest paid invoice per (user_id, subscription_product_id) for this page
+        $pageRows = $paginator->getCollection();
+        $invoiceMap = [];
+        if ($pageRows->isNotEmpty()) {
+            $pairs = $pageRows->map(fn ($r) => [$r->user_id, $r->subscription_product_id])->all();
+            $userIds    = array_unique(array_column($pairs, 0));
+            $productIds = array_unique(array_column($pairs, 1));
+            Invoice::query()
+                ->whereIn('user_id', $userIds)
+                ->whereIn('subscription_product_id', $productIds)
+                ->where('status', 'paid')
+                ->orderByDesc('id')
+                ->get(['user_id', 'subscription_product_id', 'discount_amount', 'promo_code', 'currency'])
+                ->each(function (Invoice $inv) use (&$invoiceMap): void {
+                    $key = $inv->user_id.'_'.$inv->subscription_product_id;
+                    $invoiceMap[$key] ??= $inv;
+                });
+        }
+
         $paginator->setCollection(
-            $paginator->getCollection()->map(fn (SubscriptionProductUser $row): array => [
-                'id'                       => (int) $row->getKey(),
-                'number'                   => 'SUB-'.str_pad((string) $row->getKey(), 6, '0', STR_PAD_LEFT),
-                'customerName'             => (string) ($row->user?->name ?? '—'),
-                'customerEmail'            => (string) ($row->user?->email ?? '—'),
-                'customerHandle'           => $row->user?->username ?? $row->user?->handle ?? null,
-                'planBilling'              => self::planBilling($row),
-                'product'                  => (string) ($row->product?->plan_name ?? '—'),
-                'reason'                   => 'Subscription',
-                'subtotal'                 => self::productPrice($row),
-                'discount'                 => '$0.00',
-                'paid'                     => self::productPrice($row),
-                'promoCode'                => '',
-                'invoiceStatus'            => $row->is_active ? 'Active' : 'Canceled',
-                'invoiceStatusVariant'     => $row->is_active ? 'success' : 'neutral',
-                'period'                   => self::accessPeriod($row),
-                'paidAt'                   => ($row->started_at ?? $row->created_at)?->toIso8601String() ?? '',
-                'subscriptionStatus'       => $row->is_active ? 'Active' : 'Canceled',
-                'subscriptionStatusVariant' => $row->is_active ? 'success' : 'neutral',
-                'subscriptionScheduleLine' => self::scheduleLine($row),
-                'subscriptionScheduleSub'  => null,
-                'cancelReasonDetail'       => null,
-                'canViewCancelReason'      => false,
-                'cancellationReason'       => null,
-                'userId'                   => $row->user_id,
-                'userRole'                 => $row->user?->getAttribute('role') ?? null,
-                'userIsActive'             => (bool) ($row->user?->getAttribute('is_active') ?? false),
-            ]),
+            $pageRows->map(function (SubscriptionProductUser $row) use ($invoiceMap): array {
+                $invKey = $row->user_id.'_'.$row->subscription_product_id;
+                $inv    = $invoiceMap[$invKey] ?? null;
+                $currency = (string) ($inv?->currency ?? 'usd');
+                $discount = (float) ($inv?->discount_amount ?? 0);
+                return [
+                    'id'                       => (int) $row->getKey(),
+                    'number'                   => 'SUB-'.str_pad((string) $row->getKey(), 6, '0', STR_PAD_LEFT),
+                    'customerName'             => (string) ($row->user?->name ?? '—'),
+                    'customerEmail'            => (string) ($row->user?->email ?? '—'),
+                    'customerHandle'           => $row->user?->username ?? $row->user?->handle ?? null,
+                    'planBilling'              => self::planBilling($row),
+                    'product'                  => (string) ($row->product?->plan_name ?? '—'),
+                    'reason'                   => 'Subscription',
+                    'subtotal'                 => self::productPrice($row),
+                    'discount'                 => self::money($discount, $currency),
+                    'paid'                     => self::money(max(0.0, (float) ($row->product?->price ?? 0) - $discount), $currency),
+                    'promoCode'                => $inv?->promo_code ?? '',
+                    'invoiceStatus'            => $row->is_active ? 'Active' : 'Canceled',
+                    'invoiceStatusVariant'     => $row->is_active ? 'success' : 'neutral',
+                    'period'                   => self::accessPeriod($row),
+                    'paidAt'                   => ($row->started_at ?? $row->created_at)?->toIso8601String() ?? '',
+                    'subscriptionStatus'       => $row->is_active ? 'Active' : 'Canceled',
+                    'subscriptionStatusVariant' => $row->is_active ? 'success' : 'neutral',
+                    'subscriptionScheduleLine' => self::scheduleLine($row),
+                    'subscriptionScheduleSub'  => null,
+                    'cancelReasonDetail'       => null,
+                    'canViewCancelReason'      => false,
+                    'cancellationReason'       => null,
+                    'userId'                   => $row->user_id,
+                    'userRole'                 => $row->user?->getAttribute('role') ?? null,
+                    'userIsActive'             => (bool) ($row->user?->getAttribute('is_active') ?? false),
+                ];
+            }),
         );
 
         $plans = Package::query()
@@ -186,19 +211,48 @@ class BillingLedgerController extends Controller
             $plans->map(fn (Package $p): array => ['value' => (string) $p->getKey(), 'label' => (string) $p->plan_name])->all(),
         );
 
-        $paidTotal = (float) Payment::query()
-            ->where('status', 'completed')
-            ->whereMonth('paid_at', now()->month)
-            ->whereYear('paid_at', now()->year)
-            ->sum('amount');
+        // ── Revenue card stats ────────────────────────────────────────────────
+        $prevStart = now()->subMonth()->startOfMonth();
+        $prevEnd   = now()->subMonth()->endOfMonth();
+        $currStart = now()->startOfMonth();
+
+        $prevSub     = (float) Payment::where('status', 'completed')->where('payment_type', 'subscription')->whereBetween('paid_at', [$prevStart, $prevEnd])->sum('amount');
+        $prevOneTime = (float) Payment::where('status', 'completed')->where('payment_type', 'single')->whereBetween('paid_at', [$prevStart, $prevEnd])->sum('amount');
+
+        $mtdSub     = (float) Payment::where('status', 'completed')->where('payment_type', 'subscription')->whereBetween('paid_at', [$currStart, now()])->sum('amount');
+        $mtdOneTime = (float) Payment::where('status', 'completed')->where('payment_type', 'single')->whereBetween('paid_at', [$currStart, now()])->sum('amount');
+
+        // Expected next month = sum of active monthly subscription plan prices
+        $expectedTotal  = (float) SubscriptionProductUser::query()
+            ->join('subscription_products as sp', 'sp.id', '=', 'subscription_product_user.subscription_product_id')
+            ->where('subscription_product_user.is_active', true)
+            ->where('sp.billing_cycle', 'monthly')
+            ->whereNull('sp.deleted_at')
+            ->sum('sp.price');
+        $renewingNext = SubscriptionProductUser::where('is_active', true)
+            ->whereHas('product', fn ($q) => $q->where('billing_cycle', 'monthly'))
+            ->count();
 
         $stats = [
-            'total'                    => SubscriptionProductUser::count(),
-            'active'                   => SubscriptionProductUser::where('is_active', true)->count(),
-            'paidTotal'                => self::money($paidTotal),
-            'monthlyRenewalsThisMonth' => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('billing_cycle', 'monthly'))->count(),
-            'yearlyRenewalsThisMonth'  => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('billing_cycle', 'yearly'))->count(),
+            'total'  => SubscriptionProductUser::count(),
+            'active' => SubscriptionProductUser::where('is_active', true)->count(),
+            'monthlyRenewalsThisMonth'  => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('billing_cycle', 'monthly'))->count(),
+            'yearlyRenewalsThisMonth'   => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('billing_cycle', 'yearly'))->count(),
             'lifetimeRenewalsThisMonth' => (string) SubscriptionProductUser::where('is_active', true)->whereHas('product', fn ($q) => $q->where('plan_type', 'custom')->orWhere('billing_cycle', null))->count(),
+            'prevMonth' => [
+                'paidTotal'    => self::money($prevSub + $prevOneTime),
+                'subscription' => self::money($prevSub),
+                'oneTime'      => self::money($prevOneTime),
+            ],
+            'mtd' => [
+                'paidTotal'    => self::money($mtdSub + $mtdOneTime),
+                'subscription' => self::money($mtdSub),
+                'oneTime'      => self::money($mtdOneTime),
+            ],
+            'expected' => [
+                'paidTotal'    => self::money($expectedTotal),
+                'renewingNext' => $renewingNext,
+            ],
         ];
 
         return Inertia::render('Admin/PremiumCustomers', [

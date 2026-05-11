@@ -283,7 +283,22 @@ class StripeWebhookProcessor
         $priceId = $this->extractPriceIdFromLine($line);
         [$product, ] = $this->findProductAndPrice($priceId);
 
-        $amountCents     = (int) ($invoice->amount_paid ?? $invoice->total ?? 0);
+        // subtotal = pre-discount amount; amount_paid = what customer actually paid
+        $subtotalCents   = (int) ($invoice->subtotal ?? $invoice->amount_paid ?? $invoice->total ?? 0);
+        $amountPaidCents = (int) ($invoice->amount_paid ?? $invoice->total ?? 0);
+        $discountCents   = max(0, $subtotalCents - $amountPaidCents);
+
+        // Extract promo/coupon code from the discount object
+        $discountObj = $invoice->discount ?? null;
+        $promoCode   = null;
+        if ($discountObj !== null) {
+            // coupon id is often the human-readable code; fall back to coupon name
+            $promoCode = (string) ($discountObj->coupon?->id ?? $discountObj->coupon?->name ?? '');
+            if ($promoCode === '') {
+                $promoCode = null;
+            }
+        }
+
         $currency        = strtolower((string) ($invoice->currency ?? 'usd'));
         $stripeInvoiceId = (string) ($invoice->id ?? '');
         $intentId        = (string) ($invoice->payment_intent ?? '');
@@ -307,9 +322,11 @@ class StripeWebhookProcessor
                     'payment_intent_id'       => $intentId ?: null,
                     'customer_name'           => (string) ($invoice->customer_name ?? ''),
                     'customer_email'          => $email,
-                    'amount'                  => $amountCents / 100,
+                    'amount'                  => $subtotalCents / 100,
                     'tax_amount'              => (int) ($invoice->tax ?? 0) / 100,
-                    'total_amount'            => $amountCents / 100,
+                    'discount_amount'         => $discountCents / 100,
+                    'total_amount'            => $amountPaidCents / 100,
+                    'promo_code'              => $promoCode,
                     'currency'                => $currency,
                     'status'                  => 'paid',
                     'stripe_invoice_url'      => $invoice->hosted_invoice_url ?? null,
