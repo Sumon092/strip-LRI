@@ -233,12 +233,26 @@ class WorkspaceBillingController extends Controller
         }
 
         try {
-            (new StripeClient($secret))->subscriptions->update($stripeSubId, [
+            $stripe    = new StripeClient($secret);
+            $stripeSub = $stripe->subscriptions->update($stripeSubId, [
                 'cancel_at_period_end' => false,
             ]);
 
-            Subscription::where('stripe_subscription_id', $stripeSubId)
-                ->update(['cancel_at_period_end' => false]);
+            $periodEnd = isset($stripeSub->current_period_end)
+                ? Carbon::createFromTimestamp((int) $stripeSub->current_period_end)
+                : null;
+
+            Subscription::where('stripe_subscription_id', $stripeSubId)->update([
+                'cancel_at_period_end' => false,
+                'cancel_at'            => null,
+                'canceled_at'          => null,
+            ]);
+
+            $rowUpdate = ['is_active' => true];
+            if ($periodEnd !== null) {
+                $rowUpdate['expires_at'] = $periodEnd;
+            }
+            $row->update($rowUpdate);
         } catch (\Throwable $e) {
             logger()->error('stripe-lri.resume_failed', ['error' => $e->getMessage()]);
 
@@ -463,8 +477,9 @@ class WorkspaceBillingController extends Controller
             'status'          => $cancelScheduled ? 'Canceling' : 'Active',
             'statusVariant'   => $cancelScheduled ? 'warning' : 'success',
             'accessUntil'     => self::fmt($row->expires_at, 'Ongoing'),
-            'canCancel'       => in_array($planType, ['monthly', 'yearly'], true),
+            'canCancel'       => ! $cancelScheduled && in_array($planType, ['monthly', 'yearly'], true),
             'cancelScheduled' => $cancelScheduled,
+            'canResume'       => $cancelScheduled,
         ];
     }
 
