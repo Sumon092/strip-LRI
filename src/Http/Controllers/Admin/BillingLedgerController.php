@@ -250,16 +250,20 @@ class BillingLedgerController extends Controller
         $mtdSub     = (float) Payment::where('status', 'completed')->where('payment_type', 'subscription')->whereBetween('paid_at', [$currStart, now()])->sum('amount');
         $mtdOneTime = (float) Payment::where('status', 'completed')->where('payment_type', 'single')->whereBetween('paid_at', [$currStart, now()])->sum('amount');
 
-        // Expected next month = sum of active monthly subscription plan prices
-        $expectedTotal  = (float) SubscriptionProductUser::query()
+        // Expected next month = MRR from monthly plans that will actually renew (exclude cancel_at_period_end)
+        $expectedRenewingBase = SubscriptionProductUser::query()
             ->join('subscription_products as sp', 'sp.id', '=', 'subscription_product_user.subscription_product_id')
+            ->leftJoin('subscriptions as sub', 'sub.stripe_subscription_id', '=', 'subscription_product_user.stripe_subscription_id')
             ->where('subscription_product_user.is_active', true)
             ->where('sp.billing_cycle', 'monthly')
             ->whereNull('sp.deleted_at')
-            ->sum('sp.price');
-        $renewingNext = SubscriptionProductUser::where('is_active', true)
-            ->whereHas('product', fn ($q) => $q->where('billing_cycle', 'monthly'))
-            ->count();
+            ->where(function ($q): void {
+                $q->whereNull('sub.id')
+                    ->orWhere('sub.cancel_at_period_end', false);
+            });
+
+        $expectedTotal  = (float) (clone $expectedRenewingBase)->sum('sp.price');
+        $renewingNext   = (int) (clone $expectedRenewingBase)->count();
 
         $stats = [
             'total'  => SubscriptionProductUser::count(),
@@ -277,9 +281,11 @@ class BillingLedgerController extends Controller
                 'subscription' => self::money($mtdSub),
                 'oneTime'      => self::money($mtdOneTime),
             ],
+            // `activeMonthlyRenewing` matches subscriptions included in paidTotal; use for the expected card’s “Active” chip (not stats.active).
             'expected' => [
-                'paidTotal'    => self::money($expectedTotal),
-                'renewingNext' => $renewingNext,
+                'paidTotal'             => self::money($expectedTotal),
+                'renewingNext'          => $renewingNext,
+                'activeMonthlyRenewing' => $renewingNext,
             ],
         ];
 
