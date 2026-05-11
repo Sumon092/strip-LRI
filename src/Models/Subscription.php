@@ -94,4 +94,40 @@ class Subscription extends Model
 
         return self::normalizeCancellationDetails($cd);
     }
+
+    /**
+     * Merge a new Stripe {@code cancellation_details} payload into what we already stored.
+     * Stripe often sends a full comment on one event and a slimmer object (reason only) on the next;
+     * replacing the column would drop the customer's written message.
+     *
+     * @param  array<string, mixed>|null  $previous
+     * @param  array<string, mixed>|null  $incoming
+     * @return array<string, mixed>|null
+     */
+    public static function mergeCancellationDetails(?array $previous, ?array $incoming): ?array
+    {
+        $prev = $previous ?? [];
+        $inc  = $incoming ?? [];
+        if ($prev === [] && $inc === []) {
+            return null;
+        }
+
+        $out = array_replace($prev, $inc);
+
+        foreach (['comment', 'feedback'] as $key) {
+            $prevVal = isset($prev[$key]) ? trim((string) $prev[$key]) : '';
+            if ($prevVal === '') {
+                continue;
+            }
+            if (! array_key_exists($key, $inc)) {
+                continue;
+            }
+            $incVal = trim((string) ($inc[$key] ?? ''));
+            if ($incVal === '') {
+                $out[$key] = $prev[$key];
+            }
+        }
+
+        return $out === [] ? null : $out;
+    }
 }

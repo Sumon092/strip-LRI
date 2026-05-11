@@ -398,12 +398,21 @@ class StripeWebhookProcessor
             : null;
         $isActive = in_array((string) ($sub->status ?? ''), ['active', 'trialing'], true);
 
+        $prevDetails = Subscription::query()
+            ->where('stripe_subscription_id', $stripeSubId)
+            ->value('cancellation_details');
+        $incomingDetails = Subscription::extractCancellationDetailsFromApi($sub);
+        $mergedDetails    = Subscription::mergeCancellationDetails(
+            is_array($prevDetails) ? $prevDetails : null,
+            $incomingDetails,
+        );
+
         $subscriptionPatch = [
             'status'                  => (string) ($sub->status ?? 'active'),
             'cancel_at_period_end'    => (bool) ($sub->cancel_at_period_end ?? false),
             'cancel_at'               => isset($sub->cancel_at) ? Carbon::createFromTimestamp((int) $sub->cancel_at) : null,
             'canceled_at'             => isset($sub->canceled_at) ? Carbon::createFromTimestamp((int) $sub->canceled_at) : null,
-            'cancellation_details'  => Subscription::extractCancellationDetailsFromApi($sub),
+            'cancellation_details'    => $mergedDetails,
         ];
         if ($periodEnd !== null) {
             $subscriptionPatch['current_period_end'] = $periodEnd;
@@ -428,9 +437,15 @@ class StripeWebhookProcessor
             'status'   => 'canceled',
             'ended_at' => Carbon::now(),
         ];
-        $deletedDetails = Subscription::extractCancellationDetailsFromApi($sub);
-        if ($deletedDetails !== null) {
-            $deletedPatch['cancellation_details'] = $deletedDetails;
+        $prevDeletedDetails = Subscription::query()
+            ->where('stripe_subscription_id', $stripeSubId)
+            ->value('cancellation_details');
+        $mergedDeleted = Subscription::mergeCancellationDetails(
+            is_array($prevDeletedDetails) ? $prevDeletedDetails : null,
+            Subscription::extractCancellationDetailsFromApi($sub),
+        );
+        if ($mergedDeleted !== null) {
+            $deletedPatch['cancellation_details'] = $mergedDeleted;
         }
         Subscription::where('stripe_subscription_id', $stripeSubId)->update($deletedPatch);
 

@@ -226,6 +226,8 @@ class BillingLedgerController extends Controller
                     'cancelReason'             => $cancelReasonDisplay,
                     'cancel_reason'            => $cancelReasonDisplay,
                     'cancellation_reason'      => $cancelReasonDisplay,
+                    'cancellationCustomerComment' => self::cancellationCustomerCommentFromSub($sub),
+                    'cancellation_customer_comment' => self::cancellationCustomerCommentFromSub($sub),
                     'canViewCancelReason'      => $cancelReasonDisplay !== null,
                     'userId'                   => $row->user_id,
                     'userRole'                 => $row->user?->getAttribute('role') ?? null,
@@ -500,6 +502,20 @@ class BillingLedgerController extends Controller
         return null;
     }
 
+    private static function cancellationCustomerCommentFromSub(?Subscription $sub): ?string
+    {
+        if ($sub === null) {
+            return null;
+        }
+        $details = $sub->cancellation_details;
+        if (! is_array($details)) {
+            return null;
+        }
+        $comment = trim((string) ($details['comment'] ?? ''));
+
+        return $comment !== '' ? $comment : null;
+    }
+
     private static function cancelReasonText(?Subscription $sub): ?string
     {
         if ($sub === null) {
@@ -513,12 +529,17 @@ class BillingLedgerController extends Controller
         $feedback = (string) ($details['feedback'] ?? '');
         $reason   = (string) ($details['reason'] ?? '');
         $reasonLabel = self::stripeCancellationReasonLabel($reason);
-        $parts       = array_filter([
-            $feedback !== '' ? ucwords(str_replace('_', ' ', $feedback)) : null,
-            $comment !== '' ? '"'.$comment.'"' : null,
-            $reasonLabel,
-        ]);
-        $text = implode(' — ', $parts);
+        $segments      = [];
+        if ($comment !== '') {
+            $segments[] = 'Customer message: '.$comment;
+        }
+        if ($feedback !== '') {
+            $segments[] = 'Feedback: '.ucwords(str_replace('_', ' ', $feedback));
+        }
+        if ($reasonLabel !== null) {
+            $segments[] = $reasonLabel;
+        }
+        $text = implode("\n\n", array_filter($segments));
 
         return $text !== '' ? $text : null;
     }
