@@ -152,8 +152,8 @@ class WorkspaceBillingController extends Controller
                 'statusVariant'    => self::invoiceVariant((string) $inv->status),
                 'subtotal'         => self::money((float) $inv->amount, (string) ($inv->currency ?? 'usd')),
                 'amountPaid'       => self::money((float) $inv->total_amount, (string) ($inv->currency ?? 'usd')),
-                'discountAmount'   => self::money(max(0.0, (float) $inv->amount - (float) $inv->total_amount), (string) ($inv->currency ?? 'usd')),
-                'promotionCode'    => '',
+                'discountAmount'   => self::money((float) ($inv->discount_amount ?? 0), (string) ($inv->currency ?? 'usd')),
+                'promotionCode'    => (string) ($inv->promo_code ?? ''),
                 'billingReason'    => '',
                 'period'           => self::fmt($inv->created_at),
                 'paidAt'           => self::fmt($inv->paid_at ?? $inv->created_at),
@@ -295,14 +295,11 @@ class WorkspaceBillingController extends Controller
 
         $perPage = 8;
 
-        $active = SubscriptionProductUser::query()
+        $activeSubs = SubscriptionProductUser::query()
             ->with('product.prices')
             ->where('user_id', $userId)
             ->where('is_active', true)
-            ->get()
-            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited))
-            ->values()
-            ->all();
+            ->get();
 
         $history = SubscriptionProductUser::query()
             ->with('product.prices')
@@ -311,9 +308,36 @@ class WorkspaceBillingController extends Controller
             ->paginate($perPage)
             ->withQueryString();
 
+        // Batch-fetch latest paid invoice per product — avoids N+1 and gives actual paid amount
+        $allProductIds = $activeSubs->pluck('subscription_product_id')
+            ->merge($history->getCollection()->pluck('subscription_product_id'))
+            ->unique()
+            ->filter()
+            ->values()
+            ->all();
+
+        $invoiceMap = [];
+        if ($allProductIds !== [] && $userId !== null) {
+            Invoice::query()
+                ->where('user_id', $userId)
+                ->whereIn('subscription_product_id', $allProductIds)
+                ->where('status', 'paid')
+                ->orderByDesc('id')
+                ->get(['subscription_product_id', 'total_amount', 'currency'])
+                ->each(function (Invoice $inv) use (&$invoiceMap): void {
+                    $key = (int) $inv->subscription_product_id;
+                    $invoiceMap[$key] ??= $inv;
+                });
+        }
+
+        $active = $activeSubs
+            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap))
+            ->values()
+            ->all();
+
         $history->setCollection(
             $history->getCollection()->map(
-                fn (SubscriptionProductUser $row): array => $this->toHistoryRow($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited),
+                fn (SubscriptionProductUser $row): array => $this->toHistoryRow($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap),
             ),
         );
 
@@ -339,17 +363,20 @@ class WorkspaceBillingController extends Controller
     // ── Row builders ──────────────────────────────────────────────────────────
 
     /** @return array<string, mixed> */
-    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited): array
+    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = []): array
     {
-        $product  = $row->product;
-        $price    = $product?->prices->first();
-        $planType = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
+        $product   = $row->product;
+        $price     = $product?->prices->first();
+        $planType  = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
+        $planPrice = (float) ($price?->amount ?? $product?->price ?? 0);
+        $latestInv = $invoiceMap[(int) ($row->subscription_product_id ?? 0)] ?? null;
+        $paidAmount = $latestInv !== null ? (float) $latestInv->total_amount : $planPrice;
 
         return [
             'id'             => (int) $row->getKey(),
             'planName'       => (string) ($product?->plan_name ?? '—'),
-            'price'          => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
-            'paidAmount'     => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
+            'price'          => self::money($planPrice),
+            'paidAmount'     => self::money($paidAmount, (string) ($latestInv?->currency ?? 'usd')),
             'credits'        => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
             'siteCount'      => ($siteLimited && $hasSiteCount) ? (int) ($row->site_count ?? 0) : null,
             'siteLimit'      => ($siteLimited && $hasSiteCount) ? (int) ($product?->getAttribute('site_limit') ?? 0) : null,
@@ -363,19 +390,22 @@ class WorkspaceBillingController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function toHistoryRow(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited): array
+    private function toHistoryRow(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = []): array
     {
-        $product  = $row->product;
-        $price    = $product?->prices->first();
-        $planType = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
+        $product   = $row->product;
+        $price     = $product?->prices->first();
+        $planType  = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
+        $planPrice = (float) ($price?->amount ?? $product?->price ?? 0);
+        $latestInv = $invoiceMap[(int) ($row->subscription_product_id ?? 0)] ?? null;
+        $paidAmount = $latestInv !== null ? (float) $latestInv->total_amount : $planPrice;
 
         return [
             'id'           => (int) $row->getKey(),
             'planName'     => (string) ($product?->plan_name ?? '—'),
             'billingCycle' => ucfirst($planType),
             'type'         => in_array($planType, ['monthly', 'yearly'], true) ? 'Subscription' : 'One-time',
-            'price'        => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
-            'paidAmount'   => self::money((float) ($price?->amount ?? $product?->price ?? 0)),
+            'price'        => self::money($planPrice),
+            'paidAmount'   => self::money($paidAmount, (string) ($latestInv?->currency ?? 'usd')),
             'credits'      => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
             'siteCount'    => ($siteLimited && $hasSiteCount) ? (int) ($row->site_count ?? 0) : null,
             'siteLimit'    => ($siteLimited && $hasSiteCount) ? (int) ($product?->getAttribute('site_limit') ?? 0) : null,

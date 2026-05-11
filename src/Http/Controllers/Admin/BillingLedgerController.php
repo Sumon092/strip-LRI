@@ -370,7 +370,7 @@ class BillingLedgerController extends Controller
 
     private static function creditsLabel(Invoice $inv): string
     {
-        $credits = (int) ($inv->getAttribute('credits_purchased') ?? 0);
+        $credits = (int) ($inv->getAttribute('credits_purchased') ?? $inv->product?->getAttribute('credits_limit') ?? 0);
 
         return $credits > 0 ? number_format($credits) : '—';
     }
