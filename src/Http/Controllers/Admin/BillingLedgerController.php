@@ -13,6 +13,7 @@ use Inertia\Response;
 use StripeLri\Models\Invoice;
 use StripeLri\Models\Package;
 use StripeLri\Models\Payment;
+use StripeLri\Models\Subscription;
 use StripeLri\Models\SubscriptionProductUser;
 
 class BillingLedgerController extends Controller
@@ -164,12 +165,39 @@ class BillingLedgerController extends Controller
                 });
         }
 
+        // Batch-fetch Subscription records for cancel state and cancellation reason
+        $stripeSubIds = $pageRows->pluck('stripe_subscription_id')->filter()->unique()->values()->all();
+        $subscriptionMap = [];
+        if ($stripeSubIds !== []) {
+            Subscription::whereIn('stripe_subscription_id', $stripeSubIds)
+                ->get(['stripe_subscription_id', 'cancel_at_period_end', 'cancel_at', 'current_period_end', 'canceled_at', 'cancellation_details', 'status'])
+                ->each(function (Subscription $sub) use (&$subscriptionMap): void {
+                    $subscriptionMap[(string) $sub->stripe_subscription_id] = $sub;
+                });
+        }
+
         $paginator->setCollection(
-            $pageRows->map(function (SubscriptionProductUser $row) use ($invoiceMap): array {
+            $pageRows->map(function (SubscriptionProductUser $row) use ($invoiceMap, $subscriptionMap): array {
                 $invKey = $row->user_id.'_'.$row->subscription_product_id;
                 $inv    = $invoiceMap[$invKey] ?? null;
                 $currency = (string) ($inv?->currency ?? 'usd');
                 $discount = (float) ($inv?->discount_amount ?? 0);
+
+                $sub             = $subscriptionMap[(string) ($row->stripe_subscription_id ?? '')] ?? null;
+                $cancelPeriodEnd = (bool) ($sub?->cancel_at_period_end ?? false);
+                $isCanceled      = ! $row->is_active;
+
+                if ($cancelPeriodEnd && ! $isCanceled) {
+                    $subStatus        = 'Canceling';
+                    $subStatusVariant = 'warning';
+                } elseif ($isCanceled) {
+                    $subStatus        = 'Canceled';
+                    $subStatusVariant = 'neutral';
+                } else {
+                    $subStatus        = 'Active';
+                    $subStatusVariant = 'success';
+                }
+
                 return [
                     'id'                       => (int) $row->getKey(),
                     'number'                   => 'SUB-'.str_pad((string) $row->getKey(), 6, '0', STR_PAD_LEFT),
@@ -187,13 +215,13 @@ class BillingLedgerController extends Controller
                     'invoiceStatusVariant'     => $row->is_active ? 'success' : 'neutral',
                     'period'                   => self::accessPeriod($row),
                     'paidAt'                   => ($row->started_at ?? $row->created_at)?->toIso8601String() ?? '',
-                    'subscriptionStatus'       => $row->is_active ? 'Active' : 'Canceled',
-                    'subscriptionStatusVariant' => $row->is_active ? 'success' : 'neutral',
-                    'subscriptionScheduleLine' => self::scheduleLine($row),
-                    'subscriptionScheduleSub'  => null,
-                    'cancelReasonDetail'       => null,
-                    'canViewCancelReason'      => false,
-                    'cancellationReason'       => null,
+                    'subscriptionStatus'       => $subStatus,
+                    'subscriptionStatusVariant' => $subStatusVariant,
+                    'subscriptionScheduleLine' => self::scheduleLine($row, $sub, $cancelPeriodEnd, $isCanceled),
+                    'subscriptionScheduleSub'  => self::scheduleSubLine($row, $sub, $cancelPeriodEnd, $isCanceled),
+                    'cancelReasonDetail'       => self::cancelReasonText($sub),
+                    'canViewCancelReason'      => $sub !== null && self::cancelReasonText($sub) !== null,
+                    'cancellationReason'       => self::cancelReasonText($sub),
                     'userId'                   => $row->user_id,
                     'userRole'                 => $row->user?->getAttribute('role') ?? null,
                     'userIsActive'             => (bool) ($row->user?->getAttribute('is_active') ?? false),
@@ -394,19 +422,67 @@ class BillingLedgerController extends Controller
         };
     }
 
-    private static function scheduleLine(SubscriptionProductUser $row): string
-    {
+    private static function scheduleLine(
+        SubscriptionProductUser $row,
+        ?Subscription $sub,
+        bool $cancelPeriodEnd,
+        bool $isCanceled,
+    ): string {
+        if ($isCanceled) {
+            $date = $sub?->canceled_at ?? $row->expires_at;
+            return 'Canceled '.self::fmt($date);
+        }
+        if ($cancelPeriodEnd) {
+            $date = $sub?->cancel_at ?? $row->expires_at;
+            return 'Cancels '.self::fmt($date);
+        }
+        // Active — show next renewal date
+        $date = $sub?->current_period_end ?? $row->expires_at;
         $cycle = (string) ($row->product?->billing_cycle ?? '');
-        $price = (float) ($row->product?->price ?? 0);
-        $currency = 'usd';
-
-        $label = match ($cycle) {
-            'monthly' => 'Monthly, '.self::money($price, $currency).'/mo',
-            'yearly'  => 'Yearly, '.self::money($price, $currency).'/yr',
-            default   => 'Lifetime',
+        $prefix = match ($cycle) {
+            'yearly'  => 'Renews yearly ',
+            'monthly' => 'Renews ',
+            default   => 'Access until ',
         };
+        return $prefix.self::fmt($date);
+    }
 
-        return $label;
+    private static function scheduleSubLine(
+        SubscriptionProductUser $row,
+        ?Subscription $sub,
+        bool $cancelPeriodEnd,
+        bool $isCanceled,
+    ): ?string {
+        if ($cancelPeriodEnd && ! $isCanceled) {
+            return 'Scheduled to cancel at period end';
+        }
+        if ($isCanceled && $sub !== null) {
+            $details = $sub->cancellation_details;
+            $feedback = is_array($details) ? (string) ($details['feedback'] ?? '') : '';
+            return $feedback !== '' ? ucwords(str_replace('_', ' ', $feedback)) : null;
+        }
+        return null;
+    }
+
+    private static function cancelReasonText(?Subscription $sub): ?string
+    {
+        if ($sub === null) {
+            return null;
+        }
+        $details = $sub->cancellation_details;
+        if (! is_array($details)) {
+            return null;
+        }
+        $comment  = trim((string) ($details['comment'] ?? ''));
+        $feedback = (string) ($details['feedback'] ?? '');
+        $reason   = (string) ($details['reason'] ?? '');
+        $parts    = array_filter([
+            $feedback !== '' ? ucwords(str_replace('_', ' ', $feedback)) : null,
+            $comment !== '' ? '"'.$comment.'"' : null,
+            $reason !== '' && $reason !== 'cancellation_requested' ? '('.ucwords(str_replace('_', ' ', $reason)).')' : null,
+        ]);
+        $text = implode(' — ', $parts);
+        return $text !== '' ? $text : null;
     }
 
     private static function productPrice(SubscriptionProductUser $row): string
