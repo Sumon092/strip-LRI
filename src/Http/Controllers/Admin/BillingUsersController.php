@@ -87,7 +87,19 @@ class BillingUsersController extends Controller
                 ->keyBy('user_id')
             : collect();
 
-        $rows = $paginator->getCollection()->map(function (Model $u) use ($sessions, $creditMap, $creditBased, $siteMap, $siteLimited): array {
+        $subscribedUserIds = [];
+        if ($ids !== []) {
+            $subscribedUserIds = DB::table('subscription_product_user')
+                ->whereIn('user_id', $ids)
+                ->where('is_active', true)
+                ->distinct()
+                ->pluck('user_id')
+                ->map(static fn ($id): int => (int) $id)
+                ->all();
+        }
+        $subscribedSet = array_fill_keys($subscribedUserIds, true);
+
+        $rows = $paginator->getCollection()->map(function (Model $u) use ($sessions, $creditMap, $creditBased, $siteMap, $siteLimited, $subscribedSet): array {
             $row  = UserPresenter::row($u, $sessions);
             $cred = $creditBased ? $creditMap->get((int) $u->getKey()) : null;
             if ($cred !== null) {
@@ -97,6 +109,8 @@ class BillingUsersController extends Controller
                 $row['remaining_credits'] = $balance;
                 $row['credits_used']      = max(0, $plan - $balance);
                 $row['type']              = 'Premium';
+            } elseif (isset($subscribedSet[(int) $u->getKey()])) {
+                $row['type'] = 'Premium';
             }
             $site = $siteLimited ? $siteMap->get((int) $u->getKey()) : null;
             if ($site !== null) {
@@ -148,8 +162,11 @@ class BillingUsersController extends Controller
         $model    = $this->resolveUser($user);
         $sessions = UserPresenter::latestSessionsForUserIds([(int) $model->getKey()]);
 
+        $userRow = UserPresenter::row($model, $sessions);
+        $userRow = $this->withSubscriptionUserType($userRow, (int) $model->getKey());
+
         return Inertia::render('Admin/Users/Show', array_merge(
-            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'siteLimited' => (bool) config('stripe-lri.site_limit'), 'user' => UserPresenter::row($model, $sessions)],
+            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'siteLimited' => (bool) config('stripe-lri.site_limit'), 'user' => $userRow],
             $this->billingPayload((int) $model->getKey()),
         ));
     }
@@ -159,10 +176,37 @@ class BillingUsersController extends Controller
         $model    = $this->resolveUser($user);
         $sessions = UserPresenter::latestSessionsForUserIds([(int) $model->getKey()]);
 
+        $userRow = UserPresenter::row($model, $sessions);
+        $userRow = $this->withSubscriptionUserType($userRow, (int) $model->getKey());
+
         return Inertia::render('Admin/Users/Edit', array_merge(
-            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'siteLimited' => (bool) config('stripe-lri.site_limit'), 'user' => UserPresenter::row($model, $sessions)],
+            ['creditBased' => (bool) config('stripe-lri.credit_based'), 'siteLimited' => (bool) config('stripe-lri.site_limit'), 'user' => $userRow],
             $this->billingPayload((int) $model->getKey()),
         ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $userRow
+     * @return array<string, mixed>
+     */
+    private function withSubscriptionUserType(array $userRow, int $userId): array
+    {
+        if (($userRow['type'] ?? '') === 'Premium') {
+            return $userRow;
+        }
+
+        /** @var class-string<Model> $spuClass */
+        $spuClass = config('stripe-lri.models.subscription_product_user');
+        $hasActive = $spuClass::query()
+            ->where('user_id', $userId)
+            ->where('is_active', true)
+            ->exists();
+
+        if ($hasActive) {
+            $userRow['type'] = 'Premium';
+        }
+
+        return $userRow;
     }
 
     /** @return array<string, mixed> */

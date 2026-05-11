@@ -397,18 +397,22 @@ class StripeWebhookProcessor
             : null;
         $isActive = in_array((string) ($sub->status ?? ''), ['active', 'trialing'], true);
 
-        Subscription::where('stripe_subscription_id', $stripeSubId)->update([
+        $subscriptionPatch = [
             'status'               => (string) ($sub->status ?? 'active'),
             'cancel_at_period_end' => (bool) ($sub->cancel_at_period_end ?? false),
             'cancel_at'            => isset($sub->cancel_at) ? Carbon::createFromTimestamp((int) $sub->cancel_at) : null,
-            'current_period_end'   => $periodEnd,
             'canceled_at'          => isset($sub->canceled_at) ? Carbon::createFromTimestamp((int) $sub->canceled_at) : null,
-        ]);
+        ];
+        if ($periodEnd !== null) {
+            $subscriptionPatch['current_period_end'] = $periodEnd;
+        }
+        Subscription::where('stripe_subscription_id', $stripeSubId)->update($subscriptionPatch);
 
-        SubscriptionProductUser::where('stripe_subscription_id', $stripeSubId)->update([
-            'is_active'  => $isActive,
-            'expires_at' => $periodEnd,
-        ]);
+        $spuPatch = ['is_active' => $isActive];
+        if ($periodEnd !== null) {
+            $spuPatch['expires_at'] = $periodEnd;
+        }
+        SubscriptionProductUser::where('stripe_subscription_id', $stripeSubId)->update($spuPatch);
     }
 
     private function handleSubscriptionDeleted(object $sub): void

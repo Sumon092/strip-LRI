@@ -18,6 +18,8 @@ use StripeLri\Models\Invoice;
 use StripeLri\Models\Package;
 use StripeLri\Models\Payment;
 use StripeLri\Models\Subscription;
+use StripeLri\Models\SubscriptionItem;
+use StripeLri\Models\SubscriptionProductPrice;
 use StripeLri\Models\SubscriptionProductUser;
 
 class WorkspaceBillingController extends Controller
@@ -201,12 +203,35 @@ class WorkspaceBillingController extends Controller
         }
 
         try {
-            (new StripeClient($secret))->subscriptions->update($stripeSubId, [
+            $stripe    = new StripeClient($secret);
+            $stripe->subscriptions->update($stripeSubId, [
                 'cancel_at_period_end' => true,
             ]);
+            $stripeSub = $stripe->subscriptions->retrieve($stripeSubId);
+            $periodEnd = isset($stripeSub->current_period_end)
+                ? Carbon::createFromTimestamp((int) $stripeSub->current_period_end)
+                : null;
 
-            Subscription::where('stripe_subscription_id', $stripeSubId)
-                ->update(['cancel_at_period_end' => true]);
+            $cancelSubAttrs = [
+                'user_id'                 => (int) $request->user()?->getKey(),
+                'subscription_product_id' => $row->subscription_product_id,
+                'name'                    => (string) ($row->product?->plan_name ?? ''),
+                'status'                  => (string) ($stripeSub->status ?? 'active'),
+                'cancel_at_period_end'    => (bool) ($stripeSub->cancel_at_period_end ?? true),
+                'cancel_at'               => isset($stripeSub->cancel_at) ? Carbon::createFromTimestamp((int) $stripeSub->cancel_at) : null,
+                'canceled_at'             => isset($stripeSub->canceled_at) ? Carbon::createFromTimestamp((int) $stripeSub->canceled_at) : null,
+            ];
+            if ($periodEnd !== null) {
+                $cancelSubAttrs['current_period_end'] = $periodEnd;
+            }
+            Subscription::updateOrCreate(
+                ['stripe_subscription_id' => $stripeSubId],
+                $cancelSubAttrs,
+            );
+
+            if ($periodEnd !== null) {
+                $row->update(['expires_at' => $periodEnd]);
+            }
         } catch (\Throwable $e) {
             logger()->error('stripe-lri.cancel_failed', ['error' => $e->getMessage()]);
 
@@ -242,11 +267,22 @@ class WorkspaceBillingController extends Controller
                 ? Carbon::createFromTimestamp((int) $stripeSub->current_period_end)
                 : null;
 
-            Subscription::where('stripe_subscription_id', $stripeSubId)->update([
-                'cancel_at_period_end' => false,
-                'cancel_at'            => null,
-                'canceled_at'          => null,
-            ]);
+            $resumeSubAttrs = [
+                'user_id'                 => (int) $request->user()?->getKey(),
+                'subscription_product_id' => $row->subscription_product_id,
+                'name'                    => (string) ($row->product?->plan_name ?? ''),
+                'status'                  => (string) ($stripeSub->status ?? 'active'),
+                'cancel_at_period_end'    => false,
+                'cancel_at'               => null,
+                'canceled_at'             => null,
+            ];
+            if ($periodEnd !== null) {
+                $resumeSubAttrs['current_period_end'] = $periodEnd;
+            }
+            Subscription::updateOrCreate(
+                ['stripe_subscription_id' => $stripeSubId],
+                $resumeSubAttrs,
+            );
 
             $rowUpdate = ['is_active' => true];
             if ($periodEnd !== null) {
@@ -313,7 +349,7 @@ class WorkspaceBillingController extends Controller
             }
         }
 
-        // Current subscriptions for the auth user
+        // Current subscriptions for the auth user (one row per entitlement; cancel state from local Subscription + Stripe item price)
         $currentSubscriptions = [];
         if ($userId !== null) {
             $activeSubs = SubscriptionProductUser::query()
@@ -322,21 +358,40 @@ class WorkspaceBillingController extends Controller
                 ->where('is_active', true)
                 ->get();
 
+            $stripeSubIds = $activeSubs->pluck('stripe_subscription_id')->filter()->unique()->values()->all();
+            $subscriptionMap = [];
+            if ($stripeSubIds !== []) {
+                Subscription::whereIn('stripe_subscription_id', $stripeSubIds)
+                    ->get(['stripe_subscription_id', 'cancel_at_period_end', 'cancel_at', 'current_period_end'])
+                    ->each(function (Subscription $sub) use (&$subscriptionMap): void {
+                        $subscriptionMap[(string) $sub->stripe_subscription_id] = $sub;
+                    });
+            }
+            $priceIdBySubId = self::stripePriceIdByStripeSubscriptionId($stripeSubIds);
+
             foreach ($activeSubs as $sub) {
-                foreach ($sub->product?->prices ?? [] as $price) {
-                    $planType = $price->plan_type;
-                    $isRecurring = in_array($planType, ['monthly', 'yearly'], true);
-                    $currentSubscriptions[] = [
-                        'id'                     => (int) $sub->getKey(),
-                        'type'                   => $isRecurring ? 'subscription' : 'one_time',
-                        'status'                 => 'active',
-                        'plan_type'              => $planType,
-                        'stripe_price_id'        => $price->stripe_price_id,
-                        'cancel_at_period_end'   => false,
-                        'current_period_end_at'  => $sub->expires_at?->toIso8601String(),
-                        'current_period_end_at_human' => $sub->expires_at ? self::fmt($sub->expires_at) : null,
-                    ];
+                $product       = $sub->product;
+                $stripePriceId = $priceIdBySubId[(string) ($sub->stripe_subscription_id ?? '')] ?? null;
+                $price         = self::matchProductPriceByStripeId($product, $stripePriceId) ?? $product?->prices->first();
+                if ($price === null) {
+                    continue;
                 }
+                $planType      = (string) $price->plan_type;
+                $isRecurring   = in_array($planType, ['monthly', 'yearly'], true);
+                $stripeSub     = $subscriptionMap[(string) ($sub->stripe_subscription_id ?? '')] ?? null;
+                $cancelScheduled = (bool) ($stripeSub?->cancel_at_period_end ?? false);
+                $periodEndDisplay = $stripeSub?->current_period_end ?? $sub->expires_at;
+
+                $currentSubscriptions[] = [
+                    'id'                          => (int) $sub->getKey(),
+                    'type'                        => $isRecurring ? 'subscription' : 'one_time',
+                    'status'                      => 'active',
+                    'plan_type'                   => $planType,
+                    'stripe_price_id'             => (string) ($price->stripe_price_id ?? ''),
+                    'cancel_at_period_end'        => $cancelScheduled,
+                    'current_period_end_at'       => $periodEndDisplay?->toIso8601String(),
+                    'current_period_end_at_human' => $periodEndDisplay ? self::fmt($periodEndDisplay) : null,
+                ];
             }
         }
 
@@ -414,20 +469,22 @@ class WorkspaceBillingController extends Controller
         $subscriptionMap = [];
         if ($stripeSubIds !== []) {
             Subscription::whereIn('stripe_subscription_id', $stripeSubIds)
-                ->get(['stripe_subscription_id', 'cancel_at_period_end', 'cancel_at'])
+                ->get(['stripe_subscription_id', 'cancel_at_period_end', 'cancel_at', 'current_period_end'])
                 ->each(function (Subscription $sub) use (&$subscriptionMap): void {
                     $subscriptionMap[(string) $sub->stripe_subscription_id] = $sub;
                 });
         }
 
+        $priceIdBySubId = self::stripePriceIdByStripeSubscriptionId($stripeSubIds);
+
         $active = $activeSubs
-            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap, $subscriptionMap))
+            ->map(fn (SubscriptionProductUser $row): array => $this->toActiveSubscription($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap, $subscriptionMap, $priceIdBySubId))
             ->values()
             ->all();
 
         $history->setCollection(
             $history->getCollection()->map(
-                fn (SubscriptionProductUser $row): array => $this->toHistoryRow($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap),
+                fn (SubscriptionProductUser $row): array => $this->toHistoryRow($row, $hasCreditsBalance, $creditBased, $hasSiteCount, $siteLimited, $invoiceMap, $priceIdBySubId),
             ),
         );
 
@@ -453,17 +510,19 @@ class WorkspaceBillingController extends Controller
     // ── Row builders ──────────────────────────────────────────────────────────
 
     /** @return array<string, mixed> */
-    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = [], array $subscriptionMap = []): array
+    private function toActiveSubscription(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = [], array $subscriptionMap = [], array $priceIdBySubId = []): array
     {
-        $product   = $row->product;
-        $price     = $product?->prices->first();
-        $planType  = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
-        $planPrice = (float) ($price?->amount ?? $product?->price ?? 0);
-        $latestInv = $invoiceMap[(int) ($row->subscription_product_id ?? 0)] ?? null;
-        $paidAmount = $latestInv !== null ? (float) $latestInv->total_amount : $planPrice;
+        $product        = $row->product;
+        $stripePriceId = $priceIdBySubId[(string) ($row->stripe_subscription_id ?? '')] ?? null;
+        $price          = self::matchProductPriceByStripeId($product, $stripePriceId) ?? $product?->prices->first();
+        $planType       = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
+        $planPrice      = (float) ($price?->amount ?? $product?->price ?? 0);
+        $latestInv      = $invoiceMap[(int) ($row->subscription_product_id ?? 0)] ?? null;
+        $paidAmount     = $latestInv !== null ? (float) $latestInv->total_amount : $planPrice;
 
-        $stripeSub       = $subscriptionMap[(string) ($row->stripe_subscription_id ?? '')] ?? null;
-        $cancelScheduled = (bool) ($stripeSub?->cancel_at_period_end ?? false);
+        $stripeSub          = $subscriptionMap[(string) ($row->stripe_subscription_id ?? '')] ?? null;
+        $cancelScheduled    = (bool) ($stripeSub?->cancel_at_period_end ?? false);
+        $periodEndDisplay   = $stripeSub?->current_period_end ?? $row->expires_at;
 
         return [
             'id'              => (int) $row->getKey(),
@@ -473,22 +532,23 @@ class WorkspaceBillingController extends Controller
             'credits'         => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
             'siteCount'       => ($siteLimited && $hasSiteCount) ? (int) ($row->site_count ?? 0) : null,
             'siteLimit'       => ($siteLimited && $hasSiteCount) ? (int) ($product?->getAttribute('site_limit') ?? 0) : null,
-            'period'          => self::accessPeriodLabel($row),
+            'period'          => self::accessPeriodLabel($row, $periodEndDisplay),
             'status'          => $cancelScheduled ? 'Canceling' : 'Active',
             'statusVariant'   => $cancelScheduled ? 'warning' : 'success',
-            'accessUntil'     => self::fmt($row->expires_at, 'Ongoing'),
-            'canCancel'       => ! $cancelScheduled && in_array($planType, ['monthly', 'yearly'], true),
+            'accessUntil'     => self::fmt($periodEndDisplay, 'Ongoing'),
+            'canCancel'       => ! $cancelScheduled && in_array((string) $planType, ['monthly', 'yearly'], true),
             'cancelScheduled' => $cancelScheduled,
             'canResume'       => $cancelScheduled,
         ];
     }
 
     /** @return array<string, mixed> */
-    private function toHistoryRow(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = []): array
+    private function toHistoryRow(SubscriptionProductUser $row, bool $hasCreditsBalance, bool $creditBased, bool $hasSiteCount, bool $siteLimited, array $invoiceMap = [], array $priceIdBySubId = []): array
     {
-        $product   = $row->product;
-        $price     = $product?->prices->first();
-        $planType  = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
+        $product        = $row->product;
+        $stripePriceId = $priceIdBySubId[(string) ($row->stripe_subscription_id ?? '')] ?? null;
+        $price          = self::matchProductPriceByStripeId($product, $stripePriceId) ?? $product?->prices->first();
+        $planType       = $price?->plan_type ?? ($product?->billing_cycle ?? 'monthly');
         $planPrice = (float) ($price?->amount ?? $product?->price ?? 0);
         $latestInv = $invoiceMap[(int) ($row->subscription_product_id ?? 0)] ?? null;
         $paidAmount = $latestInv !== null ? (float) $latestInv->total_amount : $planPrice;
@@ -496,8 +556,8 @@ class WorkspaceBillingController extends Controller
         return [
             'id'           => (int) $row->getKey(),
             'planName'     => (string) ($product?->plan_name ?? '—'),
-            'billingCycle' => ucfirst($planType),
-            'type'         => in_array($planType, ['monthly', 'yearly'], true) ? 'Subscription' : 'One-time',
+            'billingCycle' => ucfirst((string) $planType),
+            'type'         => in_array((string) $planType, ['monthly', 'yearly'], true) ? 'Subscription' : 'One-time',
             'price'        => self::money($planPrice),
             'paidAmount'   => self::money($paidAmount, (string) ($latestInv?->currency ?? 'usd')),
             'credits'      => ($creditBased && $hasCreditsBalance) ? number_format((int) ($row->credits_balance ?? 0)) : '—',
@@ -572,12 +632,56 @@ class WorkspaceBillingController extends Controller
         return $type !== '' ? ucfirst($type) : '—';
     }
 
-    private static function accessPeriodLabel(SubscriptionProductUser $row): string
+    private static function accessPeriodLabel(SubscriptionProductUser $row, mixed $periodEndOverride = null): string
     {
-        $start = self::fmt($row->started_at);
-        $end   = $row->expires_at ? self::fmt($row->expires_at) : 'Ongoing';
+        $start     = self::fmt($row->started_at);
+        $endSource = $periodEndOverride ?? $row->expires_at;
+        $end       = $endSource ? self::fmt($endSource) : 'Ongoing';
 
         return "{$start} – {$end}";
+    }
+
+    /**
+     * @param  list<string>  $stripeSubIds
+     * @return array<string, string> stripe_subscription_id => stripe_price_id
+     */
+    private static function stripePriceIdByStripeSubscriptionId(array $stripeSubIds): array
+    {
+        if ($stripeSubIds === []) {
+            return [];
+        }
+
+        $out = [];
+        $rows = SubscriptionItem::query()
+            ->join('subscriptions', 'subscriptions.id', '=', 'subscription_items.subscription_id')
+            ->whereIn('subscriptions.stripe_subscription_id', $stripeSubIds)
+            ->orderBy('subscription_items.id')
+            ->get(['subscriptions.stripe_subscription_id as sid', 'subscription_items.stripe_price as price']);
+
+        foreach ($rows as $r) {
+            $sid = (string) $r->sid;
+            $pid = (string) $r->price;
+            if ($pid !== '' && ! isset($out[$sid])) {
+                $out[$sid] = $pid;
+            }
+        }
+
+        return $out;
+    }
+
+    private static function matchProductPriceByStripeId(?Package $product, ?string $stripePriceId): ?SubscriptionProductPrice
+    {
+        if ($product === null || $stripePriceId === null || $stripePriceId === '') {
+            return null;
+        }
+
+        foreach ($product->prices as $p) {
+            if ((string) ($p->stripe_price_id ?? '') === $stripePriceId) {
+                return $p;
+            }
+        }
+
+        return null;
     }
 
     private function findValidCoupon(string $code): ?Coupon

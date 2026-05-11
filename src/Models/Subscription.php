@@ -6,6 +6,7 @@ namespace StripeLri\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Subscription extends Model
 {
@@ -44,5 +45,11 @@ class Subscription extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Package::class, 'subscription_product_id');
+    }
+
+    /** @return HasMany<SubscriptionItem, $this> */
+    public function items(): HasMany
+    {
+        return $this->hasMany(SubscriptionItem::class, 'subscription_id');
     }
 }
