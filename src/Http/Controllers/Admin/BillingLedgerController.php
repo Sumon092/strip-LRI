@@ -147,21 +147,32 @@ class BillingLedgerController extends Controller
 
         $paginator->setCollection(
             $paginator->getCollection()->map(fn (SubscriptionProductUser $row): array => [
+                'id'                       => (int) $row->getKey(),
+                'number'                   => 'SUB-'.str_pad((string) $row->getKey(), 6, '0', STR_PAD_LEFT),
                 'customerName'             => (string) ($row->user?->name ?? '—'),
                 'customerEmail'            => (string) ($row->user?->email ?? '—'),
                 'customerHandle'           => $row->user?->username ?? $row->user?->handle ?? null,
+                'planBilling'              => self::planBilling($row),
                 'product'                  => (string) ($row->product?->plan_name ?? '—'),
-                'subscriptionStatus'       => $row->is_active ? 'Active' : 'Canceled',
-                'subscriptionStatusVariant' => $row->is_active ? 'success' : 'neutral',
-                'subscriptionScheduleLine' => self::scheduleLine($row),
-                'subscriptionScheduleSub'  => null,
+                'reason'                   => 'Subscription',
                 'subtotal'                 => self::productPrice($row),
                 'discount'                 => '$0.00',
                 'paid'                     => self::productPrice($row),
                 'promoCode'                => '',
+                'invoiceStatus'            => $row->is_active ? 'Active' : 'Canceled',
+                'invoiceStatusVariant'     => $row->is_active ? 'success' : 'neutral',
                 'period'                   => self::accessPeriod($row),
+                'paidAt'                   => ($row->started_at ?? $row->created_at)?->toIso8601String() ?? '',
+                'subscriptionStatus'       => $row->is_active ? 'Active' : 'Canceled',
+                'subscriptionStatusVariant' => $row->is_active ? 'success' : 'neutral',
+                'subscriptionScheduleLine' => self::scheduleLine($row),
+                'subscriptionScheduleSub'  => null,
+                'cancelReasonDetail'       => null,
+                'canViewCancelReason'      => false,
                 'cancellationReason'       => null,
                 'userId'                   => $row->user_id,
+                'userRole'                 => $row->user?->getAttribute('role') ?? null,
+                'userIsActive'             => (bool) ($row->user?->getAttribute('is_active') ?? false),
             ]),
         );
 
@@ -315,6 +326,17 @@ class BillingLedgerController extends Controller
         $limit = (int) ($inv->product?->getAttribute('site_limit') ?? 0);
 
         return $limit > 0 ? number_format($limit) : '—';
+    }
+
+    private static function planBilling(SubscriptionProductUser $row): string
+    {
+        $cycle = (string) ($row->product?->billing_cycle ?? '');
+
+        return match ($cycle) {
+            'monthly' => 'monthly',
+            'yearly'  => 'yearly',
+            default   => 'lifetime',
+        };
     }
 
     private static function scheduleLine(SubscriptionProductUser $row): string
