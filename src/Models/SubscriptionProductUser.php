@@ -16,6 +16,7 @@ class SubscriptionProductUser extends Model
         'user_id', 'subscription_product_id', 'stripe_subscription_id',
         'is_active', 'started_at', 'expires_at', 'metadata',
         'credits_balance', 'credits_expires_at',
+        'site_count',
     ];
 
     protected function casts(): array
@@ -27,6 +28,7 @@ class SubscriptionProductUser extends Model
             'credits_expires_at'  => 'datetime',
             'credits_balance'     => 'integer',
             'metadata'            => 'array',
+            'site_count'          => 'integer',
         ];
     }
 

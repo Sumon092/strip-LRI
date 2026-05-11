@@ -33,6 +33,7 @@ class Package extends Model
         'created_by',
         'metadata',
         'credits_limit',
+        'site_limit',
     ];
 
     /**
@@ -49,6 +50,7 @@ class Package extends Model
             'allow_trial' => 'boolean',
             'sort_order' => 'integer',
             'credits_limit' => 'integer',
+            'site_limit' => 'integer',
         ];
     }
 
