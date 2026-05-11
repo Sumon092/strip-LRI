@@ -322,11 +322,12 @@ PHP;
         );
         $this->files->put(app_path('Console/Commands/StripeLriSeed.php'), $seed);
 
-        // Publish the promo code back-fill command
+        // Publish the promo code back-fill command (rename class to match filename convention)
         $backfill = $this->transformPhpSource(
             $this->files->get(dirname(__DIR__).'/Console/BackfillPromoCodesCommand.php'),
             'App\\Console\\Commands',
         );
+        $backfill = str_replace('class BackfillPromoCodesCommand', 'class StripeLriBackfillPromoCodes', $backfill);
         $this->files->put(app_path('Console/Commands/StripeLriBackfillPromoCodes.php'), $backfill);
     }
 
