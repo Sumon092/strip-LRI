@@ -312,10 +312,17 @@ class WorkspaceBillingController extends Controller
         $userId      = $user?->getKey();
         $creditBased = (bool) config('stripe-lri.credit_based');
         $siteLimited = (bool) config('stripe-lri.site_limit');
+        $premiumFeaturesEnabled = (bool) config('stripe-lri.premium_features')
+            && Schema::hasTable('premium_features');
 
-        // Load active packages with their prices
+        // Load active packages with their prices (and premium features when enabled)
+        $withRelations = ['items', 'prices' => fn ($q) => $q->whereNotNull('stripe_price_id')];
+        if ($premiumFeaturesEnabled) {
+            $withRelations[] = 'premiumFeatures';
+        }
+
         $packages = Package::query()
-            ->with(['items', 'prices' => fn ($q) => $q->whereNotNull('stripe_price_id')])
+            ->with($withRelations)
             ->where('status', 'active')
             ->orderBy('sort_order')
             ->get();
@@ -334,6 +341,15 @@ class WorkspaceBillingController extends Controller
                     'description' => null,
                 ])->values()->all();
 
+                $includedPremiumFeatures = null;
+                if ($premiumFeaturesEnabled && $pkg->relationLoaded('premiumFeatures')) {
+                    $includedPremiumFeatures = $pkg->premiumFeatures
+                        ->filter(static fn ($pf): bool => (bool) ($pf->pivot->is_included ?? false))
+                        ->map(static fn ($pf): string => (string) $pf->name)
+                        ->values()
+                        ->all();
+                }
+
                 $isRecurring = in_array($planType, ['monthly', 'yearly'], true);
 
                 $plans[$planType][] = [
@@ -342,6 +358,7 @@ class WorkspaceBillingController extends Controller
                     'product_description' => $pkg->description,
                     'credit_limit'        => $creditBased ? (int) ($pkg->credits_limit ?? $pkg->getAttribute('credits_limit') ?? 0) : null,
                     'site_limit'          => $siteLimited ? (int) ($pkg->site_limit ?? $pkg->getAttribute('site_limit') ?? 0) : null,
+                    'premium_features'    => $includedPremiumFeatures,
                     'is_popular'          => (bool) $pkg->is_popular,
                     'is_featured'         => (bool) $pkg->is_featured,
                     'stripe_price_id'     => (string) $price->stripe_price_id,
@@ -418,11 +435,12 @@ class WorkspaceBillingController extends Controller
         }
 
         return Inertia::render('Workspace/PricingPlans', [
-            'creditBased'          => $creditBased,
-            'siteLimited'          => $siteLimited,
-            'plans'                => $plans,
-            'currentSubscriptions' => $currentSubscriptions,
-            'yearlyDiscountPercent' => $yearlyDiscountPercent,
+            'creditBased'             => $creditBased,
+            'siteLimited'             => $siteLimited,
+            'premiumFeaturesEnabled'  => $premiumFeaturesEnabled,
+            'plans'                   => $plans,
+            'currentSubscriptions'    => $currentSubscriptions,
+            'yearlyDiscountPercent'   => $yearlyDiscountPercent,
         ]);
     }
 
