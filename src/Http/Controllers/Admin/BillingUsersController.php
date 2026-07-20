@@ -104,8 +104,11 @@ class BillingUsersController extends Controller
             $row  = UserPresenter::row($u, $sessions);
             $cred = $creditBased ? $creditMap->get((int) $u->getKey()) : null;
             if ($cred !== null) {
-                $plan    = (int) $cred->total_plan;
-                $balance = (int) $cred->total_balance;
+                // Package balances + leftover welcome/manual credits on users.*.
+                $userRemaining = (int) ($u->getAttribute('remaining_credits') ?? 0);
+                $userPlan = (int) ($u->getAttribute('plan_credits') ?? 0);
+                $plan    = (int) $cred->total_plan + $userPlan;
+                $balance = (int) $cred->total_balance + $userRemaining;
                 $row['plan_credits']      = $plan;
                 $row['remaining_credits'] = $balance;
                 $row['credits_used']      = max(0, $plan - $balance);
@@ -241,9 +244,16 @@ class BillingUsersController extends Controller
                 'planType'    => (string) ($spu->product?->prices->first()?->plan_type ?? 'monthly'),
             ])->all();
 
+            /** @var class-string<Model> $userClass */
+            $userClass = config('stripe-lri.models.user');
+            $user = $userClass::query()->find($userId);
+            $userPlan = (int) ($user?->getAttribute('plan_credits') ?? 0);
+            $userRemaining = (int) ($user?->getAttribute('remaining_credits') ?? 0);
+
             if ($creditPackages !== []) {
-                $totalPlan    = array_sum(array_column($creditPackages, 'planCredits'));
-                $totalBalance = array_sum(array_column($creditPackages, 'credits'));
+                // Package balances + leftover welcome/manual credits on users.*.
+                $totalPlan    = array_sum(array_column($creditPackages, 'planCredits')) + $userPlan;
+                $totalBalance = array_sum(array_column($creditPackages, 'credits')) + $userRemaining;
                 $creditSummary = [
                     'plan_credits'      => $totalPlan,
                     'remaining_credits' => $totalBalance,
@@ -251,15 +261,10 @@ class BillingUsersController extends Controller
                 ];
             } else {
                 // Manual / welcome credits live on users.* when there is no active subscription row.
-                /** @var class-string<Model> $userClass */
-                $userClass = config('stripe-lri.models.user');
-                $user = $userClass::query()->find($userId);
-                $plan = (int) ($user?->getAttribute('plan_credits') ?? 0);
-                $remaining = (int) ($user?->getAttribute('remaining_credits') ?? 0);
                 $creditSummary = [
-                    'plan_credits'      => $plan,
-                    'remaining_credits' => $remaining,
-                    'credits_used'      => (int) ($user?->getAttribute('credits_used') ?? max(0, $plan - $remaining)),
+                    'plan_credits'      => $userPlan,
+                    'remaining_credits' => $userRemaining,
+                    'credits_used'      => (int) ($user?->getAttribute('credits_used') ?? max(0, $userPlan - $userRemaining)),
                 ];
             }
         }
