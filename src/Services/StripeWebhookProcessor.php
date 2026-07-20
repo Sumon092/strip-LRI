@@ -306,27 +306,32 @@ class StripeWebhookProcessor
 
         // Invoice record
         if ($stripeInvoiceId !== '') {
+            $invoiceData = [
+                'user_id'                 => $user->getKey(),
+                'subscription_product_id' => $product?->getKey(),
+                'invoice_number'          => (string) ($invoice->number ?? 'INV-'.strtoupper(substr($stripeInvoiceId, -8))),
+                'payment_intent_id'       => $intentId ?: null,
+                'customer_name'           => (string) ($invoice->customer_name ?? ''),
+                'customer_email'          => $email,
+                'amount'                  => $subtotalCents / 100,
+                'tax_amount'              => (int) ($invoice->tax ?? 0) / 100,
+                'discount_amount'         => $discountCents / 100,
+                'total_amount'            => $amountPaidCents / 100,
+                'promo_code'              => $promoCode,
+                'currency'               => $currency,
+                'status'                  => 'paid',
+                'stripe_invoice_url'      => $invoice->hosted_invoice_url ?? null,
+                'stripe_invoice_pdf'      => $invoice->invoice_pdf ?? null,
+                'paid_at'                 => $now,
+            ];
+
+            if ($creditBased && $product !== null) {
+                $invoiceData['credits_purchased'] = (int) ($product->getAttribute('credits_limit') ?? 0);
+            }
+
             $localInvoice = Invoice::firstOrCreate(
                 ['stripe_invoice_id' => $stripeInvoiceId],
-                [
-                    'user_id'                 => $user->getKey(),
-                    'subscription_product_id' => $product?->getKey(),
-                    'invoice_number'          => (string) ($invoice->number ?? 'INV-'.strtoupper(substr($stripeInvoiceId, -8))),
-                    'payment_intent_id'       => $intentId ?: null,
-                    'customer_name'           => (string) ($invoice->customer_name ?? ''),
-                    'customer_email'          => $email,
-                    'amount'                  => $subtotalCents / 100,
-                    'tax_amount'              => (int) ($invoice->tax ?? 0) / 100,
-                    'discount_amount'         => $discountCents / 100,
-                    'total_amount'            => $amountPaidCents / 100,
-                    'promo_code'              => $promoCode,
-                    'credits_purchased'       => ($creditBased && $product !== null) ? (int) ($product->getAttribute('credits_limit') ?? 0) : 0,
-                    'currency'                => $currency,
-                    'status'                  => 'paid',
-                    'stripe_invoice_url'      => $invoice->hosted_invoice_url ?? null,
-                    'stripe_invoice_pdf'      => $invoice->invoice_pdf ?? null,
-                    'paid_at'                 => $now,
-                ],
+                $invoiceData,
             );
 
             // If invoice already existed but had no promo_code and we resolved one now, patch it

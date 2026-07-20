@@ -1,6 +1,6 @@
 <?php
 
-namespace StripeLri\Http\Controllers\Admin;
+namespace App\Http\Controllers\Admin;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\RedirectResponse;
@@ -8,12 +8,13 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 use Inertia\Response;
-use StripeLri\Http\Requests\AdminUserCreditsAdjustRequest;
-use StripeLri\Http\Requests\AdminUserUpdateRequest;
-use StripeLri\Services\DatabaseCreditLedger;
-use StripeLri\Support\UserPresenter;
+use App\Http\Requests\Billing\AdminUserCreditsAdjustRequest;
+use App\Http\Requests\Billing\AdminUserUpdateRequest;
+use App\Services\Billing\DatabaseCreditLedger;
+use App\Support\Billing\UserPresenter;
 
 class BillingUsersController extends Controller
 {
@@ -240,13 +241,27 @@ class BillingUsersController extends Controller
                 'planType'    => (string) ($spu->product?->prices->first()?->plan_type ?? 'monthly'),
             ])->all();
 
-            $totalPlan     = array_sum(array_column($creditPackages, 'planCredits'));
-            $totalBalance  = array_sum(array_column($creditPackages, 'credits'));
-            $creditSummary = [
-                'plan_credits'      => $totalPlan,
-                'remaining_credits' => $totalBalance,
-                'credits_used'      => max(0, $totalPlan - $totalBalance),
-            ];
+            if ($creditPackages !== []) {
+                $totalPlan    = array_sum(array_column($creditPackages, 'planCredits'));
+                $totalBalance = array_sum(array_column($creditPackages, 'credits'));
+                $creditSummary = [
+                    'plan_credits'      => $totalPlan,
+                    'remaining_credits' => $totalBalance,
+                    'credits_used'      => max(0, $totalPlan - $totalBalance),
+                ];
+            } else {
+                // Manual / welcome credits live on users.* when there is no active subscription row.
+                /** @var class-string<Model> $userClass */
+                $userClass = config('stripe-lri.models.user');
+                $user = $userClass::query()->find($userId);
+                $plan = (int) ($user?->getAttribute('plan_credits') ?? 0);
+                $remaining = (int) ($user?->getAttribute('remaining_credits') ?? 0);
+                $creditSummary = [
+                    'plan_credits'      => $plan,
+                    'remaining_credits' => $remaining,
+                    'credits_used'      => (int) ($user?->getAttribute('credits_used') ?? max(0, $plan - $remaining)),
+                ];
+            }
         }
 
         $recentPurchases = $paymentClass::with('product')
@@ -335,13 +350,8 @@ class BillingUsersController extends Controller
         $spuClass = config('stripe-lri.models.subscription_product_user');
         $spu = $spuClass::where('user_id', (int) $model->getKey())->where('is_active', true)->first();
 
-        if ($spu !== null) {
-            $newBalance = max(0, (int) $spu->getAttribute('credits_balance') + $delta);
-            $spu->setAttribute('credits_balance', $newBalance);
-            $spu->save();
-        }
-
         if (config('stripe-lri.credit_based')) {
+            // Ledger write updates subscription_product_user.credits_balance — do not pre-adjust.
             DatabaseCreditLedger::recordEntry(
                 userId: (int) $model->getKey(),
                 productId: $spu ? (int) $spu->getAttribute('subscription_product_id') : null,
@@ -349,6 +359,21 @@ class BillingUsersController extends Controller
                 entryType: $action === 'add' ? 'manual_add' : 'manual_remove',
                 description: 'Manual credit adjustment by admin',
             );
+
+            // No active subscription row: keep users.remaining_credits as the balance source.
+            if ($spu === null) {
+                $remaining = max(0, (int) $model->getAttribute('remaining_credits') + $delta);
+                $model->setAttribute('remaining_credits', $remaining);
+                $model->save();
+            }
+        } elseif ($spu !== null && Schema::hasColumn($spu->getTable(), 'credits_balance')) {
+            $newBalance = max(0, (int) $spu->getAttribute('credits_balance') + $delta);
+            $spu->setAttribute('credits_balance', $newBalance);
+            $spu->save();
+        } else {
+            $remaining = max(0, (int) $model->getAttribute('remaining_credits') + $delta);
+            $model->setAttribute('remaining_credits', $remaining);
+            $model->save();
         }
 
         return redirect()

@@ -1,6 +1,6 @@
 <?php
 
-namespace StripeLri\Support;
+namespace App\Support\Billing;
 
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -25,6 +25,9 @@ final class UserPresenter
         }
 
         $isActive = (bool) $user->getAttribute('is_active');
+        $planCredits = (int) ($user->getAttribute('plan_credits') ?? 0);
+        $remainingCredits = (int) ($user->getAttribute('remaining_credits') ?? 0);
+        $creditsUsed = (int) ($user->getAttribute('credits_used') ?? 0);
 
         return [
             'id' => (int) $user->getKey(),
@@ -33,10 +36,10 @@ final class UserPresenter
             'username' => $user->getAttribute('username') !== null ? (string) $user->getAttribute('username') : null,
             'role' => (string) $user->getAttribute('role'),
             'is_admin' => self::userIsAdmin($user),
-            'credits_used' => 0,
-            'remaining_credits' => 0,
-            'plan_credits' => 0,
-            'type' => 'Free',
+            'credits_used' => $creditsUsed,
+            'remaining_credits' => $remainingCredits,
+            'plan_credits' => $planCredits,
+            'type' => $planCredits >= 5000 ? 'Premium' : 'Free',
             'last_login_at' => $lastLoginAt,
             'last_login_ip' => $lastLoginIp,
             'status' => $isActive ? 'active' : 'inactive',
